@@ -1,0 +1,196 @@
+# CI (PLAN §9): lint -> test (coverage gate) -> audit -> tf-validate -> build
+# (both Docker targets + Trivy) -> push to Artifact Registry (main only, WIF).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  GCP_REGION: us-central1
+  # Local (unpushed) image names; the push job retags to Artifact Registry.
+  API_IMAGE: flagship-api
+  MIGRATE_IMAGE: flagship-migrate
+
+jobs:
+  lint:
+    name: Lint, format, typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: ESLint
+        run: npm run lint
+      - name: Prettier check
+        run: npm run format:check
+      - name: TypeScript
+        run: npm run typecheck
+
+  test:
+    name: Unit + integration tests (coverage gate)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: flagship
+          POSTGRES_PASSWORD: flagship
+          POSTGRES_DB: flagship
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flagship -d flagship"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://flagship:flagship@localhost:5432/flagship?schema=public
+      REDIS_URL: redis://localhost:6379
+      ADMIN_TOKEN: ci-admin-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Apply migrations to the service database
+        run: npx prisma migrate deploy
+      - name: Jest with coverage (threshold enforced by jest config)
+        run: npm run test:cov
+
+  audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: npm audit (production deps, high+)
+        continue-on-error: false
+        run: npm audit --omit=dev --audit-level=high
+
+  tf-validate:
+    name: Terraform fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive infra
+      - name: Validate both env roots (no backend — CI has no state access by design)
+        run: |
+          for d in infra/envs/staging infra/envs/production; do
+            echo "== $d"
+            terraform -chdir="$d" init -backend=false -input=false >/dev/null
+            terraform -chdir="$d" validate
+          done
+
+  build:
+    name: Build both images + Trivy scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build runtime + migrate targets with OCI labels
+        run: |
+          CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LABELS=(
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}"
+            --label "org.opencontainers.image.revision=${{ github.sha }}"
+            --label "org.opencontainers.image.created=${CREATED}"
+            --label "org.opencontainers.image.title=flagship"
+            --label "org.opencontainers.image.description=Multi-tenant feature flag service"
+          )
+          docker build --target runtime \
+            "${LABELS[@]}" --label "org.opencontainers.image.version=sha-${{ github.sha }}" \
+            -t "$API_IMAGE:sha-${{ github.sha }}" .
+          docker build --target migrate \
+            "${LABELS[@]}" --label "org.opencontainers.image.version=sha-${{ github.sha }}-migrate" \
+            -t "$MIGRATE_IMAGE:sha-${{ github.sha }}-migrate" .
+      - name: Trivy scan runtime image (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: flagship-api:sha-${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+      - name: Trivy scan migrate image (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: flagship-migrate:sha-${{ github.sha }}-migrate
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+      - name: Save images for the push job (push exactly what was scanned)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker save \
+            "$API_IMAGE:sha-${{ github.sha }}" \
+            "$MIGRATE_IMAGE:sha-${{ github.sha }}-migrate" \
+            -o images.tar
+      - name: Upload image tarball
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: images-${{ github.sha }}
+          path: images.tar
+          retention-days: 1
+
+  push:
+    name: Push to Artifact Registry (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [lint, test, audit, tf-validate, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation — no SA keys
+    steps:
+      - name: Download scanned images
+        uses: actions/download-artifact@v4
+        with:
+          name: images-${{ github.sha }}
+      - run: docker load -i images.tar
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+      - name: Push sha-tagged runtime + migrate images
+        run: |
+          AR="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/flagship/api"
+          docker tag "$API_IMAGE:sha-${{ github.sha }}" "$AR:sha-${{ github.sha }}"
+          docker tag "$MIGRATE_IMAGE:sha-${{ github.sha }}-migrate" "$AR:sha-${{ github.sha }}-migrate"
+          docker push "$AR:sha-${{ github.sha }}"
+          docker push "$AR:sha-${{ github.sha }}-migrate"

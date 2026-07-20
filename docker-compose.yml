@@ -1,0 +1,59 @@
+services:
+  api:
+    build:
+      context: .
+      target: dev
+    ports:
+      - '8080:8080'
+    environment:
+      NODE_ENV: development
+      PORT: 8080
+      DATABASE_URL: postgresql://flagship:flagship@postgres:5432/flagship?schema=public
+      REDIS_URL: redis://redis:6379
+      ADMIN_TOKEN: local-dev-admin-token
+      LOG_LEVEL: debug
+      LOG_PRETTY: 'true'
+      RATE_LIMIT_EVALUATE_PER_MIN: '600'
+      RATE_LIMIT_MANAGEMENT_PER_MIN: '120'
+      RATE_LIMIT_IP_PER_MIN: '60'
+    volumes:
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+      - ./test:/app/test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && npm run start:dev"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flagship
+      POSTGRES_PASSWORD: flagship
+      POSTGRES_DB: flagship
+    ports:
+      # 5434 on the host: many dev machines run their own Postgres on 5432.
+      - '5434:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U flagship -d flagship']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      # 6380 on the host: avoids clashing with a locally running Redis.
+      - '6380:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

@@ -1,0 +1,164 @@
+# Production canary deploy (PLAN §9), manual dispatch with an image tag:
+#   migrate job (--wait, expand/contract migrations keep the old revision live)
+#   -> deploy --no-traffic tagged "candidate"
+#   -> resolve candidate URI from trafficStatuses[] (retry until reconciled;
+#      never hand-construct tagged URLs)
+#   -> smoke against the candidate at zero user traffic
+#   -> shift 10% -> ~200 synthetic requests through the MAIN url (deterministic
+#      gate; a demo service has no organic traffic for metric queries)
+#   -> >1% failures: automated rollback to the previous revision at 100%
+#   -> healthy: promote candidate to 100%
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (e.g. sha-<git-sha>) — must exist in Artifact Registry'
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # Workload Identity Federation — no SA keys
+
+env:
+  GCP_REGION: us-central1
+  SERVICE: flagship-production
+  MIGRATE_JOB: flagship-migrate-production
+  ADMIN_TOKEN_SECRET: flagship-admin-token
+  CANARY_TAG: candidate
+  CANARY_PERCENT: '10'
+  CANARY_REQUESTS: '200'
+  CANARY_FAIL_PERCENT: '1'
+
+jobs:
+  deploy:
+    name: Migrate, canary, promote (or rollback)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run database migrations (Cloud Run job, --wait)
+        run: |
+          AR="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/flagship/api"
+          gcloud run jobs update "$MIGRATE_JOB" \
+            --image "$AR:${{ inputs.image_tag }}-migrate" \
+            --region "$GCP_REGION"
+          gcloud run jobs execute "$MIGRATE_JOB" --region "$GCP_REGION" --wait
+
+      - name: Deploy candidate revision with zero traffic
+        run: |
+          AR="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/flagship/api"
+          gcloud run deploy "$SERVICE" \
+            --image "$AR:${{ inputs.image_tag }}" \
+            --region "$GCP_REGION" \
+            --no-traffic \
+            --tag "$CANARY_TAG"
+
+      - name: Resolve candidate URI + current serving revision (retry until reconciled)
+        id: revs
+        run: |
+          CANDIDATE_URI=""; CANDIDATE_REV=""; PREV_REV=""; MAIN_URL=""
+          for attempt in $(seq 1 30); do
+            JSON="$(gcloud run services describe "$SERVICE" --region "$GCP_REGION" --format=json)"
+            # v2 field: trafficStatuses[].uri — traffic[] carries no URLs.
+            # (.status.traffic[].url fallback tolerates older v1-shaped output.)
+            CANDIDATE_URI="$(jq -r --arg t "$CANARY_TAG" \
+              '((.trafficStatuses // .status.traffic // [])[] | select(.tag == $t) | (.uri // .url)) // empty' \
+              <<<"$JSON")"
+            RECONCILING="$(jq -r '.reconciling // false' <<<"$JSON")"
+            if [ -n "$CANDIDATE_URI" ] && [ "$RECONCILING" != "true" ]; then
+              break
+            fi
+            CANDIDATE_URI=""
+            echo "attempt $attempt: candidate URI not reconciled yet; retrying in 5s"
+            sleep 5
+          done
+          if [ -z "$CANDIDATE_URI" ]; then
+            echo "candidate URI never reconciled; service state:"; echo "$JSON" | jq .
+            exit 1
+          fi
+          CANDIDATE_REV="$(jq -r --arg t "$CANARY_TAG" \
+            '((.trafficStatuses // .status.traffic // [])[] | select(.tag == $t) | (.revision // .revisionName)) // empty' \
+            <<<"$JSON")"
+          # The revision currently serving user traffic = rollback target.
+          PREV_REV="$(jq -r --arg t "$CANARY_TAG" \
+            '[(.trafficStatuses // .status.traffic // [])[]
+              | select(((.percent // 0) > 0) and .tag != $t)]
+             | sort_by(-(.percent // 0)) | (.[0].revision // .[0].revisionName) // empty' \
+            <<<"$JSON")"
+          MAIN_URL="$(jq -r '.uri // .status.url // empty' <<<"$JSON")"
+          [ -n "$MAIN_URL" ] || { echo "could not resolve main service URL"; exit 1; }
+          {
+            echo "candidate_uri=$CANDIDATE_URI"
+            echo "candidate_rev=$CANDIDATE_REV"
+            echo "prev_rev=$PREV_REV"
+            echo "main_url=$MAIN_URL"
+          } >> "$GITHUB_OUTPUT"
+          echo "candidate: $CANDIDATE_REV @ $CANDIDATE_URI"
+          echo "previous serving revision: ${PREV_REV:-<none>}"
+
+      - name: Smoke test candidate at zero user traffic
+        env:
+          SMOKE_SERVICE: ${{ env.SERVICE }}
+          SMOKE_ENVIRONMENT: production
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+        run: ./scripts/smoke.sh "${{ steps.revs.outputs.candidate_uri }}"
+
+      - name: Shift 10% of traffic to candidate
+        id: shift
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --region "$GCP_REGION" \
+            --to-tags "$CANARY_TAG=$CANARY_PERCENT"
+
+      - name: Canary gate — synthetic traffic through the main URL
+        id: canary
+        run: |
+          MAIN_URL="${{ steps.revs.outputs.main_url }}"
+          TOTAL="$CANARY_REQUESTS"; FAILS=0
+          for i in $(seq 1 "$TOTAL"); do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$MAIN_URL/readyz" || echo 000)"
+            [ "$code" = "200" ] || { FAILS=$((FAILS + 1)); echo "request $i: HTTP $code"; }
+            sleep 0.2
+          done
+          echo "canary result: $FAILS/$TOTAL failed"
+          # Fail when failure ratio exceeds CANARY_FAIL_PERCENT (>1%).
+          if [ $((FAILS * 100)) -gt $((TOTAL * CANARY_FAIL_PERCENT)) ]; then
+            echo "failure ratio above ${CANARY_FAIL_PERCENT}% — rolling back"
+            exit 1
+          fi
+
+      - name: Automated rollback (canary failed after traffic shift)
+        if: failure() && steps.shift.outcome == 'success'
+        run: |
+          PREV_REV="${{ steps.revs.outputs.prev_rev }}"
+          if [ -n "$PREV_REV" ]; then
+            gcloud run services update-traffic "$SERVICE" \
+              --region "$GCP_REGION" \
+              --to-revisions "$PREV_REV=100"
+            echo "rolled back: 100% of traffic on $PREV_REV"
+          else
+            echo "no previous serving revision recorded — cannot roll back automatically"
+          fi
+          exit 1
+
+      - name: Promote candidate to 100%
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --region "$GCP_REGION" \
+            --to-tags "$CANARY_TAG=100"
+          echo "candidate promoted to 100%"

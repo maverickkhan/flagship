@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+  // Explicit engine targets: local dev on Apple Silicon (native), CI runners
+  // and Cloud Run on x64 Debian, local Docker on arm64 Debian. Without libssl
+  // present at generate time Prisma guesses openssl-1.1.x and the runtime
+  // image (OpenSSL 3) boots dead.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum FlagType {
+  boolean
+  string
+  number
+
+  @@map("flag_type")
+}
+
+enum FlagStatus {
+  active
+  archived
+
+  @@map("flag_status")
+}
+
+enum Environment {
+  development
+  staging
+  production
+
+  @@map("environment")
+}
+
+enum AuditAction {
+  flag_created     @map("flag.created")
+  flag_updated     @map("flag.updated")
+  flag_archived    @map("flag.archived")
+  flag_unarchived  @map("flag.unarchived")
+
+  @@map("audit_action")
+}
+
+model Tenant {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  apiKeys   ApiKey[]
+  flags     Flag[]
+
+  @@map("tenants")
+}
+
+model ApiKey {
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String    @map("tenant_id") @db.Uuid
+  keyHash   String    @unique @map("key_hash")
+  keyPrefix String    @map("key_prefix")
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+model Flag {
+  id           String     @id @default(uuid()) @db.Uuid
+  tenantId     String     @map("tenant_id") @db.Uuid
+  key          String
+  name         String
+  description  String?
+  type         FlagType
+  defaultValue Json       @map("default_value")
+  status       FlagStatus @default(active)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  environments FlagEnvironment[]
+
+  @@unique([tenantId, key])
+  // Referenced by flag_environments' composite FK (added in raw migration SQL).
+  @@unique([id, tenantId])
+  @@index([tenantId, status])
+  @@map("flags")
+}
+
+model FlagEnvironment {
+  id                String      @id @default(uuid()) @db.Uuid
+  flagId            String      @map("flag_id") @db.Uuid
+  // Denormalized on purpose: every table carries tenant_id; the composite FK
+  // (flag_id, tenant_id) -> flags(id, tenant_id) keeps it consistent.
+  tenantId          String      @map("tenant_id") @db.Uuid
+  environment       Environment
+  enabled           Boolean     @default(false)
+  serveValue        Json        @map("serve_value")
+  rolloutPercentage Decimal     @default(100) @map("rollout_percentage") @db.Decimal(5, 2)
+  targetingRules    Json        @default("[]") @map("targeting_rules")
+  variants          Json?
+  updatedAt         DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  flag Flag @relation(fields: [flagId, tenantId], references: [id, tenantId], onDelete: Cascade)
+
+  @@unique([flagId, environment])
+  @@index([tenantId, environment])
+  @@map("flag_environments")
+}
+
+model AuditLog {
+  id          BigInt       @id @default(autoincrement())
+  tenantId    String       @map("tenant_id") @db.Uuid
+  flagId      String       @map("flag_id") @db.Uuid
+  actor       String
+  action      AuditAction
+  environment Environment?
+  oldValue    Json?        @map("old_value")
+  newValue    Json?        @map("new_value")
+  requestId   String?      @map("request_id")
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([flagId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

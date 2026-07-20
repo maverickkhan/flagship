@@ -1,0 +1,100 @@
+# Staging deploy (PLAN §9): runs automatically after CI succeeds on main.
+# migrate job (--wait) -> deploy 100% -> self-sufficient smoke (fetches the
+# admin token from Secret Manager, mints a throwaway tenant, exercises
+# auth + CRUD + audit + evaluate, greps Cloud Logging for the throwaway key).
+name: Deploy Staging
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (e.g. sha-<git-sha>); defaults to sha-<current sha>'
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # Workload Identity Federation — no SA keys
+
+env:
+  GCP_REGION: us-central1
+  SERVICE: flagship-staging
+  MIGRATE_JOB: flagship-migrate-staging
+  ADMIN_TOKEN_SECRET: flagship-admin-token
+
+jobs:
+  deploy:
+    name: Migrate, deploy, smoke
+    # workflow_run fires on failure too — only deploy on CI success.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # For workflow_run, check out the commit CI actually built.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            TAG="${{ inputs.image_tag }}"
+          elif [ -n "${{ github.event.workflow_run.head_sha }}" ]; then
+            TAG="sha-${{ github.event.workflow_run.head_sha }}"
+          else
+            TAG="sha-${{ github.sha }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Deploying image tag $TAG"
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run database migrations (Cloud Run job, --wait)
+        run: |
+          AR="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/flagship/api"
+          gcloud run jobs update "$MIGRATE_JOB" \
+            --image "$AR:${{ steps.tag.outputs.tag }}-migrate" \
+            --region "$GCP_REGION"
+          gcloud run jobs execute "$MIGRATE_JOB" --region "$GCP_REGION" --wait
+
+      - name: Deploy service at 100%
+        run: |
+          AR="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/flagship/api"
+          gcloud run deploy "$SERVICE" \
+            --image "$AR:${{ steps.tag.outputs.tag }}" \
+            --region "$GCP_REGION"
+          gcloud run services update-traffic "$SERVICE" \
+            --region "$GCP_REGION" --to-latest
+
+      - name: Resolve service URL
+        id: url
+        run: |
+          URL="$(gcloud run services describe "$SERVICE" --region "$GCP_REGION" \
+            --format=json | jq -r '.uri // .status.url // empty')"
+          [ -n "$URL" ] || { echo "could not resolve service URL"; exit 1; }
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Staging URL: $URL"
+
+      - name: Smoke test (self-sufficient, incl. log-leak grep)
+        env:
+          SMOKE_SERVICE: ${{ env.SERVICE }}
+          SMOKE_ENVIRONMENT: staging
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+        run: ./scripts/smoke.sh "${{ steps.url.outputs.url }}"

@@ -1,0 +1,143 @@
+{
+  "displayName": "${name} service overview",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "xPos": 0,
+        "yPos": 0,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Flag evaluation latency p50 / p95 / p99 (ms)",
+          "xyChart": {
+            "chartOptions": { "mode": "COLOR" },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "legendTemplate": "p50",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "histogram_quantile(0.50, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"generic_task\"}[5m])))"
+                }
+              },
+              {
+                "plotType": "LINE",
+                "legendTemplate": "p95",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "histogram_quantile(0.95, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"generic_task\"}[5m])))"
+                }
+              },
+              {
+                "plotType": "LINE",
+                "legendTemplate": "p99",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "histogram_quantile(0.99, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"generic_task\"}[5m])))"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 0,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Evaluations/sec by tenant",
+          "xyChart": {
+            "chartOptions": { "mode": "COLOR" },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "sum by (tenant) (rate(${evals_metric}{monitored_resource=\"generic_task\"}[1m]))"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Error rate by endpoint (5xx ratio)",
+          "xyChart": {
+            "chartOptions": { "mode": "COLOR" },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "sum by (endpoint) (rate(${http_metric}{monitored_resource=\"generic_task\",status_class=\"5xx\"}[5m])) / sum by (endpoint) (rate(${http_metric}{monitored_resource=\"generic_task\"}[5m]))"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Flag-config cache hit ratio",
+          "xyChart": {
+            "chartOptions": { "mode": "COLOR" },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "sum(rate(${cache_metric}{monitored_resource=\"generic_task\",event=\"hit\"}[5m])) / sum(rate(${cache_metric}{monitored_resource=\"generic_task\"}[5m]))"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run instance count",
+          "xyChart": {
+            "chartOptions": { "mode": "COLOR" },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "sum by (state) (run_googleapis_com:container_instance_count{monitored_resource=\"cloud_run_revision\",service_name=\"${service_name}\"})"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud SQL CPU utilization",
+          "xyChart": {
+            "chartOptions": { "mode": "COLOR" },
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "cloudsql_googleapis_com:database_cpu_utilization{monitored_resource=\"cloudsql_database\",database_id=\"${database_id}\"}"
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

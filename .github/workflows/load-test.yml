@@ -1,0 +1,102 @@
+# Load test (PLAN §9/§12), manual dispatch from a US runner (proximity to
+# us-central1). Self-sufficient like the smoke: mints its own throwaway tenant
+# and flags via the admin token — no pre-provisioning dependency — then runs
+# k6 against staging and uploads the summary. Thresholds are informational;
+# results land in the README table.
+name: Load Test
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: load-test
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # Workload Identity Federation — no SA keys
+
+env:
+  GCP_REGION: us-central1
+  SERVICE: flagship-staging
+  ADMIN_TOKEN_SECRET: flagship-admin-token
+  K6_ENVIRONMENT: staging
+
+jobs:
+  k6:
+    name: k6 evaluate scenario vs staging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve staging URL
+        id: url
+        run: |
+          URL="$(gcloud run services describe "$SERVICE" --region "$GCP_REGION" \
+            --format=json | jq -r '.uri // .status.url // empty')"
+          [ -n "$URL" ] || { echo "could not resolve staging URL"; exit 1; }
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Mint throwaway tenant + flags (same pattern as smoke)
+        id: seed
+        run: |
+          BASE_URL="${{ steps.url.outputs.url }}"
+          ADMIN_TOKEN="$(gcloud secrets versions access latest \
+            --secret "$ADMIN_TOKEN_SECRET" --project "${{ secrets.GCP_PROJECT_ID }}")"
+          echo "::add-mask::$ADMIN_TOKEN"
+
+          resp="$(curl -sS --fail-with-body -X POST "$BASE_URL/api/v1/tenants" \
+            -H "X-Admin-Token: $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"loadtest-$(date +%s)-$RANDOM\"}")"
+          TENANT_ID="$(jq -r .tenant_id <<<"$resp")"
+          API_KEY="$(jq -r .api_key <<<"$resp")"
+          echo "::add-mask::$API_KEY"
+          FLAGS_URL="$BASE_URL/api/v1/tenants/$TENANT_ID/flags"
+
+          create_flag() { # key type default_value
+            curl -sS --fail-with-body -X POST "$FLAGS_URL" \
+              -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
+              -d "{\"key\":\"$1\",\"name\":\"$1\",\"type\":\"$2\",\"default_value\":$3}" >/dev/null
+          }
+          enable_flag() { # key body
+            curl -sS --fail-with-body -X PUT "$FLAGS_URL/$1?environment=$K6_ENVIRONMENT" \
+              -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
+              -d "$2" >/dev/null
+          }
+
+          # Mixed shapes so the engine (not one code path) is measured:
+          # fully-on boolean, 50% rollout boolean, 25% rollout number.
+          create_flag k6_bool_on boolean false
+          enable_flag k6_bool_on '{"enabled":true,"rollout_percentage":100}'
+          create_flag k6_bool_50 boolean false
+          enable_flag k6_bool_50 '{"enabled":true,"rollout_percentage":50}'
+          create_flag k6_number_25 number 250
+          enable_flag k6_number_25 '{"enabled":true,"rollout_percentage":25,"serve_value":500}'
+
+          {
+            echo "K6_BASE_URL=$BASE_URL"
+            echo "K6_TENANT_ID=$TENANT_ID"
+            echo "K6_API_KEY=$API_KEY"
+          } >> "$GITHUB_ENV"
+          echo "Seeded tenant $TENANT_ID with 3 flags in $K6_ENVIRONMENT"
+
+      - uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 evaluate scenario
+        run: k6 run load-test/evaluate.k6.js --summary-export k6-summary.json
+
+      - name: Upload k6 summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-summary-${{ github.run_id }}
+          path: k6-summary.json
+          if-no-files-found: warn
