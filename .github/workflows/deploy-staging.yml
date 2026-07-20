@@ -27,6 +27,7 @@ permissions:
 env:
   GCP_REGION: us-central1
   SERVICE: flagship-staging
+  IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
   MIGRATE_JOB: flagship-migrate-staging
   ADMIN_TOKEN_SECRET: flagship-admin-token
 
@@ -48,8 +49,8 @@ jobs:
       - name: Resolve image tag
         id: tag
         run: |
-          if [ -n "${{ inputs.image_tag }}" ]; then
-            TAG="${{ inputs.image_tag }}"
+          if [ -n "${IMAGE_TAG_INPUT}" ]; then
+            TAG="${IMAGE_TAG_INPUT}"
           elif [ -n "${{ github.event.workflow_run.head_sha }}" ]; then
             TAG="sha-${{ github.event.workflow_run.head_sha }}"
           else

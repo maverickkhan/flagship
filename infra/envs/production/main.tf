@@ -31,8 +31,8 @@ locals {
   service = "flagship"
 
   registry      = "${var.region}-docker.pkg.dev/${var.project_id}/${local.service}"
-  image         = coalesce(var.image, "${local.registry}/${local.service}:bootstrap")
-  migrate_image = coalesce(var.migrate_image, "${local.registry}/${local.service}:bootstrap-migrate")
+  image         = coalesce(var.image, "${local.registry}/api:bootstrap")
+  migrate_image = coalesce(var.migrate_image, "${local.registry}/api:bootstrap-migrate")
 
   # Created by infra/bootstrap.
   deployer_service_account_email = "${local.service}-deployer@${var.project_id}.iam.gserviceaccount.com"

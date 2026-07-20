@@ -37,9 +37,11 @@ export class FlagConfigCacheService {
     const cached = await this.redis.safeGet(cacheKey);
     if (cached) {
       this.stats.hits++;
+      this.logger.log({ event: 'flag_cache', outcome: 'hit', tenant_id: tenantId });
       return JSON.parse(cached) as EvaluableFlag[];
     }
     this.stats.misses++;
+    this.logger.log({ event: 'flag_cache', outcome: 'miss', tenant_id: tenantId });
 
     const flags = await this.prisma.flag.findMany({
       where: { tenantId },
@@ -74,8 +76,20 @@ export class FlagConfigCacheService {
     return configs;
   }
 
-  /** Called after every flag mutation commit — all three env keys drop. */
+  /**
+   * Called after every flag mutation commit — all three env keys drop.
+   * A failed DEL (Redis blip) leaves stale config live for at most the TTL
+   * backstop; that bounded-staleness window is documented in DECISIONS.md,
+   * and the failure is logged loudly rather than swallowed.
+   */
   async invalidate(tenantId: string): Promise<void> {
-    await this.redis.safeDel(...ENVIRONMENTS.map((env) => this.key(tenantId, env)));
+    const ok = await this.redis.safeDel(...ENVIRONMENTS.map((env) => this.key(tenantId, env)));
+    if (!ok) {
+      this.logger.warn({
+        event: 'flag_cache_invalidation_failed',
+        tenant_id: tenantId,
+        message: `cache invalidation DEL failed; stale configs possible for up to ${config.cache.flagConfigTtlSeconds}s`,
+      });
+    }
   }
 }

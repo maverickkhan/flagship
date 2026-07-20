@@ -53,7 +53,7 @@ export function evaluateFlag(
 
   if (flag.type === 'string' && env.variants && env.variants.length > 0) {
     return {
-      value: pickVariant(env.variants, userBucket, pct),
+      value: pickVariant(env.variants, tenantId, flag.key, userId),
       reason: pct < 100 ? 'ROLLOUT_MATCH' : 'FALLTHROUGH',
     };
   }
@@ -80,17 +80,27 @@ function firstMatchingRule(
 }
 
 /**
- * Weighted variant selection. The user's bucket is re-scaled from the
- * in-rollout range [0, pct) to [0, 100) and walked across cumulative weights,
- * so variant proportions hold at any rollout percentage and stay sticky for a
- * given user as the rollout grows.
+ * Weighted variant selection uses a SECOND, independent bucket (the flag key
+ * salted with ":__variants") walked across cumulative weights. Independence
+ * from the rollout bucket is what makes variant assignment sticky: re-scaling
+ * the rollout bucket into the variant range would re-shuffle every in-rollout
+ * user's variant each time the rollout percentage changes. With an
+ * independent bucket, growing the rollout only ever ADDS users, and every
+ * user's variant is fixed for the lifetime of the flag. Proportions hold at
+ * any rollout percentage because the two buckets are statistically
+ * independent (unit-tested).
  */
-function pickVariant(variants: Variant[], userBucket: number, pct: number): FlagValue {
-  const scaled = pct >= 100 ? userBucket : (userBucket / pct) * 100;
+function pickVariant(
+  variants: Variant[],
+  tenantId: string,
+  flagKey: string,
+  userId: string,
+): FlagValue {
+  const variantBucket = bucket(tenantId, `${flagKey}:__variants`, userId);
   let cumulative = 0;
   for (const variant of variants) {
     cumulative += variant.weight;
-    if (scaled < cumulative) return variant.value;
+    if (variantBucket < cumulative) return variant.value;
   }
   return variants[variants.length - 1].value;
 }

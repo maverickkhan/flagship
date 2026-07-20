@@ -34,12 +34,6 @@ variable "database_id" {
   type        = string
 }
 
-variable "eval_latency_metric" {
-  description = "PromQL-mangled name of the custom eval-latency distribution metric. Default matches the OTel exporter's workload.googleapis.com/flag_evaluation.duration; if the log-based fallback ships instead (PLAN §10), point this at the log-based metric name (e.g. logging_googleapis_com:user_flag_evaluation_duration)."
-  type        = string
-  default     = "workload_googleapis_com:flag_evaluation_duration"
-}
-
 variable "eval_latency_p99_threshold_ms" {
   description = "p99 evaluation-latency alert threshold, in milliseconds (the app records the histogram in ms)."
   type        = number
@@ -52,20 +46,3 @@ variable "error_ratio_threshold" {
   default     = 0.05
 }
 
-variable "evals_metric" {
-  description = "PromQL-mangled name of the evaluations counter metric."
-  type        = string
-  default     = "workload_googleapis_com:flag_evaluations_count"
-}
-
-variable "http_metric" {
-  description = "PromQL-mangled name of the HTTP requests counter metric."
-  type        = string
-  default     = "workload_googleapis_com:http_requests_count"
-}
-
-variable "cache_metric" {
-  description = "PromQL-mangled name of the flag-config cache events counter metric."
-  type        = string
-  default     = "workload_googleapis_com:flag_cache_events"
-}

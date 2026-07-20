@@ -134,10 +134,11 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_provider_id = "github-oidc"
   display_name                       = "GitHub OIDC"
 
-  # Pinned to exactly this repository: tokens minted for any other repo are
-  # rejected at the provider, before any IAM evaluation. attribute.ref is
-  # mapped so bindings can be narrowed to a branch later if needed.
-  attribute_condition = "assertion.repository == \"${var.github_repository}\""
+  # Pinned to exactly this repository AND the main branch: tokens minted for
+  # any other repo or ref are rejected at the provider, before any IAM
+  # evaluation. All deploying workflows (push to main, workflow_dispatch on
+  # main) present ref refs/heads/main; PR runs never get deployer credentials.
+  attribute_condition = "assertion.repository == \"${var.github_repository}\" && assertion.ref == \"refs/heads/main\""
 
   attribute_mapping = {
     "google.subject"       = "assertion.sub"

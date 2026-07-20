@@ -17,21 +17,21 @@
                 "plotType": "LINE",
                 "legendTemplate": "p50",
                 "timeSeriesQuery": {
-                  "prometheusQuery": "histogram_quantile(0.50, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"generic_task\"}[5m])))"
+                  "prometheusQuery": "histogram_quantile(0.50, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"cloud_run_revision\"}[5m])))"
                 }
               },
               {
                 "plotType": "LINE",
                 "legendTemplate": "p95",
                 "timeSeriesQuery": {
-                  "prometheusQuery": "histogram_quantile(0.95, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"generic_task\"}[5m])))"
+                  "prometheusQuery": "histogram_quantile(0.95, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"cloud_run_revision\"}[5m])))"
                 }
               },
               {
                 "plotType": "LINE",
                 "legendTemplate": "p99",
                 "timeSeriesQuery": {
-                  "prometheusQuery": "histogram_quantile(0.99, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"generic_task\"}[5m])))"
+                  "prometheusQuery": "histogram_quantile(0.99, sum by (le) (rate(${eval_latency_metric}_bucket{monitored_resource=\"cloud_run_revision\"}[5m])))"
                 }
               }
             ]
@@ -51,7 +51,7 @@
               {
                 "plotType": "LINE",
                 "timeSeriesQuery": {
-                  "prometheusQuery": "sum by (tenant) (rate(${evals_metric}{monitored_resource=\"generic_task\"}[1m]))"
+                  "prometheusQuery": "sum by (tenant) (rate(${evals_metric}{monitored_resource=\"cloud_run_revision\"}[1m]))"
                 }
               }
             ]
@@ -71,7 +71,7 @@
               {
                 "plotType": "LINE",
                 "timeSeriesQuery": {
-                  "prometheusQuery": "sum by (endpoint) (rate(${http_metric}{monitored_resource=\"generic_task\",status_class=\"5xx\"}[5m])) / sum by (endpoint) (rate(${http_metric}{monitored_resource=\"generic_task\"}[5m]))"
+                  "prometheusQuery": "sum by (endpoint) (rate(${http_metric}{monitored_resource=\"cloud_run_revision\",status_class=\"5\"}[5m])) / sum by (endpoint) (rate(${http_metric}{monitored_resource=\"cloud_run_revision\"}[5m]))"
                 }
               }
             ]
@@ -91,7 +91,7 @@
               {
                 "plotType": "LINE",
                 "timeSeriesQuery": {
-                  "prometheusQuery": "sum(rate(${cache_metric}{monitored_resource=\"generic_task\",event=\"hit\"}[5m])) / sum(rate(${cache_metric}{monitored_resource=\"generic_task\"}[5m]))"
+                  "prometheusQuery": "sum(rate(${cache_metric}{monitored_resource=\"cloud_run_revision\",event=\"hit\"}[5m])) / sum(rate(${cache_metric}{monitored_resource=\"cloud_run_revision\"}[5m]))"
                 }
               }
             ]

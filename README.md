@@ -125,9 +125,11 @@ Speed is irrelevant here (~1µs vs request I/O). The **environment is deliberate
 a user keeps the same bucket across dev/staging/production, so a rollout can be validated in
 staging with the exact cohort it will hit in production.
 
-Weighted variants re-scale the user's bucket from the in-rollout range `[0, pct)` back to
-`[0, 100)` and walk cumulative weights — proportions hold at any rollout percentage and stay
-sticky as it grows.
+Weighted variants use a **second, independent bucket** (`flagKey:__variants` hashed the same
+way) walked across cumulative weights. Independence is what makes variant assignment sticky:
+re-scaling the rollout bucket would re-shuffle every user's variant each time the percentage
+changes, while an independent bucket fixes each user's variant for the life of the flag —
+growing the rollout only ever adds users. Both properties are unit-tested.
 
 ## API
 
@@ -208,14 +210,17 @@ the RUNBOOK.
   Trace field so app logs nest under their Cloud Run request log. Credential-bearing headers are
   **redacted at the serializer** (`x-api-key`, `x-admin-token`, `authorization`, cookies) — unit
   tested, and the staging smoke test greps its own request logs to prove key absence.
-- **Metrics** (custom, exported to Cloud Monitoring): evaluation latency p50/p95/p99,
-  evaluations/sec by tenant, error rate by endpoint, cache hit/miss ratio.
+- **Metrics — log-based, by design**: the app emits structured events (`flag_evaluation` with
+  `duration_ms` + tenant, `flag_cache` hit/miss) and Terraform `google_logging_metric` resources
+  derive the custom metrics from them: evaluation latency distribution (p50/p95/p99),
+  evaluations/sec by tenant, requests by endpoint/status class, cache hit ratio. Why log-based
+  over an in-process OTel exporter: zero exporter risk on Cloud Run (multi-instance time-series
+  collisions, CPU-throttled background flushes, SIGTERM loss are all known fights), no new
+  dependencies, and the structured logs already exist. The OTel path is documented future work;
+  `cpu_idle=false` is already set so switching later is config-only.
 - **Dashboard + alert policies in Terraform** (PromQL — MQL is deprecated): 5xx ratio >5% over
   5min, eval p99 over threshold, uptime-check failures on `/healthz`, all routed to a
   notification channel. Screenshots land here after the GCP deploy.
-- Cloud Run gotchas pre-empted in config: `cpu_idle=false` so background metric export isn't
-  CPU-throttled; unique per-instance resource attributes so multi-instance exports don't collide;
-  flush on SIGTERM.
 
 ## Security
 
@@ -257,8 +262,13 @@ make test-integration  # 28 e2e tests vs real Postgres+Redis
 
 | Run | RPS | p50 | p95 | p99 | errors |
 |---|---|---|---|---|---|
-| local (compose, M-series) | _pending_ | | | | |
+| local (M-series, 61,460 reqs, 100 VU peak) | 245.7/s¹ | 2.9 ms | 5.6 ms | 8.4 ms | 0.00% |
 | staging (Cloud Run) | _pending GCP deploy_ | | | | |
+
+¹ Rate is pacing-limited by the scenario (per-VU sleep), not the server — p95 stayed at 5.6 ms at
+peak. Bonus empirical check: the seeded staging flag runs a **40% rollout**, and across 61k
+requests with random users k6 observed **40.3% ROLLOUT_MATCH** — the bucketing distribution
+measured in the wild, not just in unit tests.
 
 CI runs lint → typecheck → unit+integration (coverage gate: 80% lines) → `npm audit` → Trivy on
 both images → `terraform validate` on every PR. With more time: SDK contract tests, mutation
@@ -288,6 +298,26 @@ testing on the engine, Redis-outage chaos test, soak testing.
 - Targeting rules are deliberately minimal (`eq`/`in`, first-match-wins) — the assessment's
   focus is the rollout engine, not a rules DSL.
 - One GCP project hosts both envs (credit conservation); project-per-env is the production shape.
+
+## Deploying from scratch (operator)
+
+```bash
+# 1. One-time bootstrap: APIs, state bucket, Artifact Registry, WIF, deployer SA
+terraform -chdir=infra/bootstrap init && terraform -chdir=infra/bootstrap apply
+./infra/bootstrap/secrets.sh                 # mints admin + evaluator tokens out-of-band
+
+# 2. Wire GitHub Actions to GCP (three repo secrets, from bootstrap outputs)
+gh secret set GCP_WIF_PROVIDER --body "$(terraform -chdir=infra/bootstrap output -raw workload_identity_provider)"
+gh secret set GCP_DEPLOYER_SA  --body "$(terraform -chdir=infra/bootstrap output -raw deployer_service_account)"
+gh secret set GCP_PROJECT_ID   --body "<project-id>"
+
+# 3. Seed images so the first apply has something to run, then apply per env
+make bootstrap-image REGISTRY=us-central1-docker.pkg.dev/<project>/flagship
+make tf-apply ENV=staging          # ~20-30 min first time (Cloud SQL + Redis provisioning)
+make tf-apply ENV=production
+
+# 4. From here CI owns delivery: push to main → staging; dispatch → production canary
+```
 
 ## Repository layout
 

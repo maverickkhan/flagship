@@ -148,3 +148,18 @@ config, not hidden.
 starts, probes pass, metrics exported); once SSE ships as a supported feature it
 enters the gate with its own integration tests (connect, heartbeat, tenant+env
 scoped delivery, reconnect).
+
+## 9. Bounded cache staleness under Redis failure (accepted)
+
+**What:** Cache invalidation is an explicit `DEL` after each mutation commit, with a 300s TTL
+backstop. Two edges exist: (a) a concurrent cache-miss read can repopulate the key with
+pre-mutation config if its DB read raced the commit; (b) if the invalidation `DEL` itself fails
+during a Redis blip, stale config stays live. Both are bounded by the TTL — worst case 300s of
+stale flags — and the failed-DEL case logs a loud `flag_cache_invalidation_failed` warning.
+
+**Why:** The precise fix (per-tenant version counter embedded in the cache key so stale writes
+become unreachable) adds a Redis round-trip to every mutation and more key management for a
+window that the TTL already caps at 5 minutes on an internal platform.
+
+**Production-grade:** versioned cache keys (`flagcfg:{tenant}:{env}:{version}`), or Redis
+transactions/Lua tying DEL to the DB commit via an outbox.

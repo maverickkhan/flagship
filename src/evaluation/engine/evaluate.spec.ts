@@ -197,4 +197,25 @@ describe('weighted variants', () => {
     expect(counts.red / inRollout).toBeCloseTo(0.3, 1);
     expect(counts.blue / inRollout).toBeCloseTo(0.2, 1);
   });
+
+  it('variant assignment is sticky across rollout ramp-up (20% -> 50% -> 100%)', () => {
+    // The variant bucket is independent of the rollout bucket, so a user who
+    // is in-rollout at 20% keeps the SAME variant at every higher percentage.
+    const at = (pct: number, user: string) =>
+      evaluateFlag(
+        TENANT,
+        makeFlag({ type: 'string', defaultValue: 'control', variants, rolloutPercentage: pct }),
+        user,
+      ).value;
+    let checked = 0;
+    for (let i = 0; i < 5000; i++) {
+      const user = `user-${i}`;
+      const v20 = at(20, user);
+      if (v20 === 'control') continue; // not in rollout at 20%
+      checked++;
+      expect(at(50, user)).toBe(v20);
+      expect(at(100, user)).toBe(v20);
+    }
+    expect(checked).toBeGreaterThan(500);
+  });
 });

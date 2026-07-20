@@ -1,10 +1,7 @@
-import { Body, Controller, HttpException, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator';
 import { AdminTokenGuard } from '../auth/admin-token.guard';
-import { config } from '../config';
-import { RedisService } from '../redis/redis.service';
 import { TenantsService } from './tenants.service';
-import type { Request } from 'express';
 
 export class CreateTenantDto {
   @IsString()
@@ -16,21 +13,14 @@ export class CreateTenantDto {
 
 @Controller('api/v1/tenants')
 export class TenantsController {
-  constructor(
-    private readonly tenants: TenantsService,
-    private readonly redis: RedisService,
-  ) {}
+  constructor(private readonly tenants: TenantsService) {}
 
+  // Brute-force protection for the admin token lives in AdminTokenGuard
+  // itself (guards run before handlers — a handler-side counter would only
+  // ever throttle valid-token callers).
   @Post()
   @UseGuards(AdminTokenGuard)
-  async create(@Body() dto: CreateTenantDto, @Req() req: Request) {
-    // IP fixed-window on the one unauthenticated-by-API-key surface: a static
-    // admin token must not be brute-forceable at line rate.
-    const minute = Math.floor(Date.now() / 60000);
-    const count = await this.redis.incrWindow(`rl:ip:${req.ip}:tenants:${minute}`, 60);
-    if (count !== null && count > config.rateLimit.ipPerMin) {
-      throw new HttpException({ message: 'Too many requests', code: 'RATE_LIMITED' }, 429);
-    }
+  create(@Body() dto: CreateTenantDto) {
     return this.tenants.create(dto.name);
   }
 }

@@ -52,12 +52,13 @@ export class RedisService implements OnModuleDestroy {
     }
   }
 
-  /** DEL that swallows Redis failures. */
-  async safeDel(...keys: string[]): Promise<void> {
+  /** DEL that reports failure instead of throwing (callers decide loudness). */
+  async safeDel(...keys: string[]): Promise<boolean> {
     try {
       if (keys.length) await this.client.del(...keys);
+      return true;
     } catch {
-      /* degraded mode */
+      return false;
     }
   }
 

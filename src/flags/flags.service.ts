@@ -125,9 +125,16 @@ export class FlagsService {
       });
     }
 
-    const flag = await this.findFlagOrThrow(tenantId, flagKey);
-
     const updated = await this.prisma.$transaction(async (tx) => {
+      // Read inside the transaction: the pre-image feeds audit old_value and
+      // the archived/unarchived action classification — a read outside the tx
+      // would record a stale old_value under concurrent updates.
+      const flag = await tx.flag.findUnique({
+        where: { tenantId_key: { tenantId, key: flagKey } },
+      });
+      if (!flag) {
+        throw new NotFoundException({ message: `Flag "${flagKey}" not found`, code: 'NOT_FOUND' });
+      }
       let result = flag;
 
       // Flag-level changes
@@ -143,14 +150,16 @@ export class FlagsService {
       }
       if (dto.status !== undefined && dto.status !== flag.status) flagData.status = dto.status;
 
+      const flagAction =
+        dto.status === 'archived' && flag.status === 'active'
+          ? 'flag_archived'
+          : dto.status === 'active' && flag.status === 'archived'
+            ? 'flag_unarchived'
+            : 'flag_updated';
+
       if (Object.keys(flagData).length > 0) {
         result = await tx.flag.update({ where: { id: flag.id }, data: flagData });
-        const action =
-          dto.status === 'archived' && flag.status === 'active'
-            ? 'flag_archived'
-            : dto.status === 'active' && flag.status === 'archived'
-              ? 'flag_unarchived'
-              : 'flag_updated';
+        const action = flagAction;
         await tx.auditLog.create({
           data: {
             tenantId,
@@ -218,31 +227,32 @@ export class FlagsService {
         });
       }
 
-      return tx.flag.findUniqueOrThrow({
+      const full = await tx.flag.findUniqueOrThrow({
         where: { id: flag.id },
         include: { environments: true },
       });
+      return { full, realtimeAction: flagAction.replace('_', '.') };
     });
 
     await this.cache.invalidate(tenantId);
     await this.realtime.publish(tenantId, environment ? [environment] : [...ENVIRONMENTS], {
       flag_key: flagKey,
-      action:
-        dto.status === 'archived'
-          ? 'flag.archived'
-          : dto.status === 'active' && flag.status === 'archived'
-            ? 'flag.unarchived'
-            : 'flag.updated',
+      action: updated.realtimeAction,
     });
-    return this.serializeFlag(updated, updated.environments);
+    return this.serializeFlag(updated.full, updated.full.environments);
   }
 
   async archive(tenantId: string, flagKey: string, actor: string, requestId?: string) {
-    const flag = await this.findFlagOrThrow(tenantId, flagKey);
-    if (flag.status === 'archived') {
-      return { flag_key: flagKey, status: 'archived' };
-    }
     await this.prisma.$transaction(async (tx) => {
+      // Pre-image read inside the tx (see update()): audit old_value must be
+      // the actual previous state, not a stale snapshot.
+      const flag = await tx.flag.findUnique({
+        where: { tenantId_key: { tenantId, key: flagKey } },
+      });
+      if (!flag) {
+        throw new NotFoundException({ message: `Flag "${flagKey}" not found`, code: 'NOT_FOUND' });
+      }
+      if (flag.status === 'archived') return;
       await tx.flag.update({ where: { id: flag.id }, data: { status: 'archived' } });
       await tx.auditLog.create({
         data: {

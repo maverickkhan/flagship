@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { evaluateFlag } from './engine/evaluate';
 import type { EvaluationContext } from './engine/types';
 import { FlagConfigCacheService } from './flag-config-cache.service';
@@ -6,9 +6,12 @@ import type { EvaluateDto } from './evaluation.controller';
 
 @Injectable()
 export class EvaluationService {
+  private readonly logger = new Logger(EvaluationService.name);
+
   constructor(private readonly cache: FlagConfigCacheService) {}
 
-  async evaluate(tenantId: string, dto: EvaluateDto) {
+  async evaluate(tenantId: string, dto: EvaluateDto, requestId?: string) {
+    const startedAt = process.hrtime.bigint();
     const configs = await this.cache.getConfigs(tenantId, dto.environment);
     const context: EvaluationContext = dto.context ?? {};
 
@@ -33,6 +36,17 @@ export class EvaluationService {
       flags[flag.key] = evaluateFlag(tenantId, flag, dto.user_id, context);
     }
 
-    return { environment: dto.environment, user_id: dto.user_id, flags };
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    // Structured event feeding the log-based metrics (Terraform
+    // google_logging_metric): eval latency distribution + evals/sec by tenant.
+    this.logger.log({
+      event: 'flag_evaluation',
+      tenant_id: tenantId,
+      environment: dto.environment,
+      duration_ms: Math.round(durationMs * 1000) / 1000,
+      flags_evaluated: selected.length,
+    });
+
+    return { environment: dto.environment, user_id: dto.user_id, flags, request_id: requestId };
   }
 }

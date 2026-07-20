@@ -102,7 +102,7 @@ resource "random_password" "migrator" {
 resource "google_sql_user" "app" {
   project  = var.project_id
   instance = google_sql_database_instance.postgres.name
-  name     = "app"
+  name     = "flagship_app"
   password = random_password.app.result
 }
 

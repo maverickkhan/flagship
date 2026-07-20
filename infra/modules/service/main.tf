@@ -128,6 +128,10 @@ resource "google_cloud_run_v2_service" "api" {
     service_account                  = google_service_account.api.email
     max_instance_request_concurrency = var.concurrency
 
+    # Long request timeout so SSE streams (bonus feature) are not cut at the
+    # 300 s default; clients still reconnect on the hourly cap.
+    timeout = "3600s"
+
     scaling {
       min_instance_count = var.min_instances
       max_instance_count = var.max_instances
@@ -172,6 +176,14 @@ resource "google_cloud_run_v2_service" "api" {
       env {
         name  = "LOG_LEVEL"
         value = var.log_level
+      }
+
+      # Cloud Run does not inject this; the app needs it to emit the
+      # logging.googleapis.com/trace field that nests app logs under their
+      # Cloud Run request log (src/common/logging.ts).
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
       }
 
       # Per-env tuning, e.g. rate-limit config (PLAN §6).

@@ -29,6 +29,9 @@ permissions:
 env:
   GCP_REGION: us-central1
   SERVICE: flagship-production
+  # workflow_dispatch inputs reach the shell via env, never inline ${{ }}
+  # interpolation in run: — that is the actions template-injection pattern.
+  IMAGE_TAG: ${{ inputs.image_tag }}
   MIGRATE_JOB: flagship-migrate-production
   ADMIN_TOKEN_SECRET: flagship-admin-token
   CANARY_TAG: candidate
@@ -55,7 +58,7 @@ jobs:
         run: |
           AR="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/flagship/api"
           gcloud run jobs update "$MIGRATE_JOB" \
-            --image "$AR:${{ inputs.image_tag }}-migrate" \
+            --image "$AR:${IMAGE_TAG}-migrate" \
             --region "$GCP_REGION"
           gcloud run jobs execute "$MIGRATE_JOB" --region "$GCP_REGION" --wait
 
@@ -63,7 +66,7 @@ jobs:
         run: |
           AR="${GCP_REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/flagship/api"
           gcloud run deploy "$SERVICE" \
-            --image "$AR:${{ inputs.image_tag }}" \
+            --image "$AR:${IMAGE_TAG}" \
             --region "$GCP_REGION" \
             --no-traffic \
             --tag "$CANARY_TAG"

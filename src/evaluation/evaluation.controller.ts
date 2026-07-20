@@ -45,11 +45,11 @@ export class EvaluationController {
 
   @Post()
   evaluate(@Body() dto: EvaluateDto, @Req() req: AuthenticatedRequest) {
-    return this.evaluation.evaluate(req.tenant!.id, dto);
+    return this.evaluation.evaluate(req.tenant!.id, dto, String(req.id));
   }
 
   @Post('bulk')
   bulk(@Body() dto: EvaluateDto, @Req() req: AuthenticatedRequest) {
-    return this.evaluation.evaluate(req.tenant!.id, { ...dto, flag_keys: undefined });
+    return this.evaluation.evaluate(req.tenant!.id, { ...dto, flag_keys: undefined }, String(req.id));
   }
 }

@@ -75,6 +75,122 @@ resource "google_monitoring_alert_policy" "error_ratio" {
 }
 
 # ---------------------------------------------------------------------------
+# Log-based metrics (PLAN §10 fallback, promoted to the shipped design):
+# the app emits structured pino events; these metrics derive the custom
+# observability signals from them with zero in-process exporter risk.
+# Names are PromQL-safe (underscores) and env-suffixed — metrics are
+# project-global while this module is instantiated per environment.
+# ---------------------------------------------------------------------------
+
+locals {
+  metric_prefix = replace(local.name, "-", "_")
+  log_base      = "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${var.service_name}\""
+
+  eval_latency_promql = "logging_googleapis_com:user_${google_logging_metric.eval_latency.name}"
+  evals_promql        = "logging_googleapis_com:user_${google_logging_metric.evals_count.name}"
+  http_promql         = "logging_googleapis_com:user_${google_logging_metric.http_requests.name}"
+  cache_promql        = "logging_googleapis_com:user_${google_logging_metric.cache_events.name}"
+}
+
+resource "google_logging_metric" "eval_latency" {
+  project         = var.project_id
+  name            = "${local.metric_prefix}_eval_latency"
+  filter          = "${local.log_base} AND jsonPayload.event=\"flag_evaluation\""
+  value_extractor = "EXTRACT(jsonPayload.duration_ms)"
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "DISTRIBUTION"
+    unit        = "ms"
+
+    labels {
+      key        = "tenant"
+      value_type = "STRING"
+    }
+  }
+
+  label_extractors = {
+    tenant = "EXTRACT(jsonPayload.tenant_id)"
+  }
+
+  bucket_options {
+    exponential_buckets {
+      num_finite_buckets = 32
+      growth_factor      = 1.5
+      scale              = 0.5
+    }
+  }
+}
+
+resource "google_logging_metric" "evals_count" {
+  project = var.project_id
+  name    = "${local.metric_prefix}_evals_count"
+  filter  = "${local.log_base} AND jsonPayload.event=\"flag_evaluation\""
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+
+    labels {
+      key        = "tenant"
+      value_type = "STRING"
+    }
+  }
+
+  label_extractors = {
+    tenant = "EXTRACT(jsonPayload.tenant_id)"
+  }
+}
+
+resource "google_logging_metric" "http_requests" {
+  project = var.project_id
+  name    = "${local.metric_prefix}_http_requests"
+  filter  = "${local.log_base} AND jsonPayload.message=\"request completed\""
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+
+    labels {
+      key        = "endpoint"
+      value_type = "STRING"
+    }
+
+    labels {
+      # First digit of the status code ("2", "4", "5") — log-based label
+      # extractors cannot compute "5xx", so dashboards filter on "5".
+      key        = "status_class"
+      value_type = "STRING"
+    }
+  }
+
+  label_extractors = {
+    endpoint     = "REGEXP_EXTRACT(jsonPayload.req.url, \"^/(?:api/v1/)?([a-z]+)\")"
+    status_class = "REGEXP_EXTRACT(jsonPayload.res.statusCode, \"^([0-9])\")"
+  }
+}
+
+resource "google_logging_metric" "cache_events" {
+  project = var.project_id
+  name    = "${local.metric_prefix}_cache_events"
+  filter  = "${local.log_base} AND jsonPayload.event=\"flag_cache\""
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+
+    labels {
+      key        = "event"
+      value_type = "STRING"
+    }
+  }
+
+  label_extractors = {
+    event = "EXTRACT(jsonPayload.outcome)"
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Alert: evaluation latency p99 above threshold
 # ---------------------------------------------------------------------------
 
@@ -95,7 +211,7 @@ resource "google_monitoring_alert_policy" "eval_latency_p99" {
       query = <<-EOT
         histogram_quantile(
           0.99,
-          sum by (le) (rate(${var.eval_latency_metric}_bucket{monitored_resource="generic_task"}[5m]))
+          sum by (le) (rate(${local.eval_latency_promql}_bucket{monitored_resource="cloud_run_revision"}[5m]))
         ) > ${var.eval_latency_p99_threshold_ms}
       EOT
     }
@@ -186,9 +302,9 @@ resource "google_monitoring_dashboard" "service" {
     name                = local.name
     service_name        = var.service_name
     database_id         = var.database_id
-    eval_latency_metric = var.eval_latency_metric
-    evals_metric        = var.evals_metric
-    http_metric         = var.http_metric
-    cache_metric        = var.cache_metric
+    eval_latency_metric = local.eval_latency_promql
+    evals_metric        = local.evals_promql
+    http_metric         = local.http_promql
+    cache_metric        = local.cache_promql
   })
 }

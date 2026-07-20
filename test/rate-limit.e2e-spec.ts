@@ -5,6 +5,18 @@ process.env.RATE_LIMIT_EVALUATE_PER_MIN = '8';
 
 import { createTenant, createTestApp, resetState, TestApp } from './helpers';
 
+/**
+ * The fixed window is keyed on the wall-clock minute; a rollover mid-test
+ * would reset counters and flake the exact-count assertions. If fewer than
+ * 10s remain in the current minute, wait it out first.
+ */
+async function ensureWindowHeadroom(): Promise<void> {
+  const msLeft = 60_000 - (Date.now() % 60_000);
+  if (msLeft < 10_000) {
+    await new Promise((resolve) => setTimeout(resolve, msLeft + 100));
+  }
+}
+
 describe('per-tenant rate limiting (e2e)', () => {
   let t: TestApp;
   let tenant: { tenantId: string; apiKey: string };
@@ -14,6 +26,8 @@ describe('per-tenant rate limiting (e2e)', () => {
     await resetState(t);
     tenant = await createTenant(t, 'ratelimit-tenant');
   });
+
+  beforeEach(ensureWindowHeadroom);
 
   afterAll(async () => {
     await t.close();

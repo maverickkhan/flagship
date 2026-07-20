@@ -137,7 +137,7 @@ export function mix(data) {
   }
 
   const ok = check(res, {
-    'status is 200': (r) => r.status === 200,
+    'status is 2xx': (r) => r.status === 200 || r.status === 201,
     'body has flags': (r) => {
       try {
         const body = r.json();
