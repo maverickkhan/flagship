@@ -27,7 +27,8 @@ describe('per-tenant rate limiting (e2e)', () => {
     tenant = await createTenant(t, 'ratelimit-tenant');
   });
 
-  beforeEach(ensureWindowHeadroom);
+  // Can wait up to ~10s at a minute boundary — needs more than jest's 5s hook timeout.
+  beforeEach(ensureWindowHeadroom, 15_000);
 
   afterAll(async () => {
     await t.close();
