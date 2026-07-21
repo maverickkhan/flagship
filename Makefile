@@ -43,10 +43,12 @@ docker-build:
 	docker build --target migrate -t flagship-migrate:local .
 
 # Push both images to Artifact Registry (REGISTRY=<region>-docker.pkg.dev/<project>/flagship)
-docker-push: docker-build
+# --platform linux/amd64: Cloud Run only runs amd64; a default build on Apple
+# Silicon produces arm64 manifests Cloud Run rejects outright.
+docker-push:
 	@test -n "$(REGISTRY)" || { echo "usage: make docker-push REGISTRY=us-central1-docker.pkg.dev/<project>/flagship [TAG=sha-...]"; exit 1; }
-	docker tag flagship-api:local $(REGISTRY)/api:$(or $(TAG),local)
-	docker tag flagship-migrate:local $(REGISTRY)/api:$(or $(TAG),local)-migrate
+	docker build --platform linux/amd64 --target runtime -t $(REGISTRY)/api:$(or $(TAG),local) .
+	docker build --platform linux/amd64 --target migrate -t $(REGISTRY)/api:$(or $(TAG),local)-migrate .
 	docker push $(REGISTRY)/api:$(or $(TAG),local)
 	docker push $(REGISTRY)/api:$(or $(TAG),local)-migrate
 

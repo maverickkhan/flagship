@@ -163,3 +163,15 @@ window that the TTL already caps at 5 minutes on an internal platform.
 
 **Production-grade:** versioned cache keys (`flagcfg:{tenant}:{env}:{version}`), or Redis
 transactions/Lua tying DEL to the DB commit via an outbox.
+
+## 10. `/healthz` is intercepted by Google's frontend on run.app domains (discovered in prod)
+
+**What:** External requests to the exact path `/healthz` on `*.run.app` never reach the
+container — Google's frontend serves its own HTML 404 (`/healthz/` and every other path pass
+through). Discovered when the staging smoke probe failed against a perfectly healthy service.
+
+**Fix shipped:** external surfaces (deploy smoke probe, uptime check) hit `/readyz`;
+container-internal probes (Cloud Run startup/liveness, Docker HEALTHCHECK) keep `/healthz`
+— they bypass the frontend and are unaffected.
+
+**Production-grade:** custom domain (no GFE path interception) or a dedicated `/live` alias.

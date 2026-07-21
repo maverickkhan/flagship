@@ -95,11 +95,11 @@ mask "$ADMIN_TOKEN"
 # ---------------------------------------------------------------------------
 # 2. Health — retry a few times in case the new revision is still settling
 # ---------------------------------------------------------------------------
-log "Probing $BASE_URL/healthz"
+log "Probing $BASE_URL/readyz"  # /healthz is intercepted by Google's frontend on *.run.app — external checks use /readyz
 for attempt in $(seq 1 10); do
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$BASE_URL/healthz" || echo 000)"
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$BASE_URL/readyz" || echo 000)"
   [ "$code" = "200" ] && break
-  [ "$attempt" = "10" ] && fail "/healthz did not return 200 after 10 attempts (last: $code)"
+  [ "$attempt" = "10" ] && fail "/readyz did not return 200 after 10 attempts (last: $code)"
   sleep 3
 done
 http GET "$BASE_URL/readyz" 'Accept: application/json'

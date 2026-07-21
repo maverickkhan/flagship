@@ -226,17 +226,20 @@ resource "google_monitoring_alert_policy" "eval_latency_p99" {
 }
 
 # ---------------------------------------------------------------------------
-# Uptime check on /healthz + alert
+# Uptime check + alert. Path is /readyz, NOT /healthz: Google's frontend
+# intercepts the exact path /healthz on *.run.app domains and serves its own
+# 404 before the request reaches the container (container-internal probes are
+# unaffected). Discovered empirically; documented in DECISIONS.md.
 # ---------------------------------------------------------------------------
 
 resource "google_monitoring_uptime_check_config" "healthz" {
   project      = var.project_id
-  display_name = "${local.name} /healthz"
+  display_name = "${local.name} /readyz"
   timeout      = "10s"
   period       = "60s"
 
   http_check {
-    path         = "/healthz"
+    path         = "/readyz"
     port         = 443
     use_ssl      = true
     validate_ssl = true
@@ -258,7 +261,7 @@ resource "google_monitoring_uptime_check_config" "healthz" {
 # deliberately stays on condition_threshold.
 resource "google_monitoring_alert_policy" "uptime" {
   project      = var.project_id
-  display_name = "${local.name}: /healthz uptime check failing"
+  display_name = "${local.name}: /readyz uptime check failing"
   combiner     = "OR"
 
   conditions {
@@ -286,7 +289,7 @@ resource "google_monitoring_alert_policy" "uptime" {
   notification_channels = [google_monitoring_notification_channel.email.id]
 
   documentation {
-    content   = "/healthz on ${local.name} is failing from external checkers. First response: docs/RUNBOOK.md — `gcloud run services describe ${var.service_name}`, then check revision health and roll back if a deploy is in flight."
+    content   = "/readyz on ${local.name} is failing from external checkers. First response: docs/RUNBOOK.md — `gcloud run services describe ${var.service_name}`, then check revision health and roll back if a deploy is in flight."
     mime_type = "text/markdown"
   }
 }
