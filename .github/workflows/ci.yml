@@ -134,7 +134,7 @@ jobs:
             "${LABELS[@]}" --label "org.opencontainers.image.version=sha-${{ github.sha }}-migrate" \
             -t "$MIGRATE_IMAGE:sha-${{ github.sha }}-migrate" .
       - name: Trivy scan runtime image (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: flagship-api:sha-${{ github.sha }}
           severity: HIGH,CRITICAL
@@ -142,7 +142,7 @@ jobs:
           exit-code: '1'
           format: table
       - name: Trivy scan migrate image (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: flagship-migrate:sha-${{ github.sha }}-migrate
           severity: HIGH,CRITICAL
