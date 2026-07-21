@@ -62,7 +62,7 @@ describe('per-tenant rate limiting (e2e)', () => {
         .send({ tenant_id: tenant.tenantId, environment: 'staging', user_id: `u-${i}` });
       results.push(res.status);
     }
-    expect(results.filter((s) => s === 201).length).toBe(8);
+    expect(results.filter((s) => s === 200).length).toBe(8);
     expect(results.filter((s) => s === 429).length).toBe(2);
   });
 
@@ -73,6 +73,6 @@ describe('per-tenant rate limiting (e2e)', () => {
       .post('/api/v1/evaluate/bulk')
       .set('X-API-Key', other.apiKey)
       .send({ tenant_id: other.tenantId, environment: 'staging', user_id: 'u' })
-      .expect(201);
+      .expect(200);
   });
 });

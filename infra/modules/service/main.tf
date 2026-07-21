@@ -161,9 +161,9 @@ resource "google_cloud_run_v2_service" "api" {
           memory = var.memory
         }
 
-        # Instance-based billing (CPU always allocated): the OTel exporter
-        # flushes on a 60 s background timer that request-based CPU
-        # throttling would starve between requests (PLAN §2/§10).
+        # Instance-based billing (CPU always allocated): keeps background
+        # work (SSE heartbeats today; a future in-process OTel exporter's
+        # 60 s flush) from being CPU-throttled between requests.
         cpu_idle          = false
         startup_cpu_boost = true
       }

@@ -162,11 +162,19 @@ resource "google_logging_metric" "http_requests" {
       key        = "status_class"
       value_type = "STRING"
     }
+
+    labels {
+      # Spec asks for error rate per tenant + endpoint; request logs carry
+      # tenant_id for authenticated calls (empty for anonymous ones).
+      key        = "tenant"
+      value_type = "STRING"
+    }
   }
 
   label_extractors = {
     endpoint     = "REGEXP_EXTRACT(jsonPayload.req.url, \"^/(?:api/v1/)?([a-z]+)\")"
     status_class = "REGEXP_EXTRACT(jsonPayload.res.statusCode, \"^([0-9])\")"
+    tenant       = "EXTRACT(jsonPayload.tenant_id)"
   }
 }
 

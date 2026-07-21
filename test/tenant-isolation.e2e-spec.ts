@@ -61,7 +61,7 @@ describe('tenant isolation (e2e)', () => {
       .post('/api/v1/evaluate/bulk')
       .set('X-API-Key', tenantB.apiKey)
       .send({ tenant_id: tenantB.tenantId, environment: 'production', user_id: 'u1' })
-      .expect(201);
+      .expect(200);
     expect(Object.keys(res.body.flags)).not.toContain('secret-feature');
   });
 

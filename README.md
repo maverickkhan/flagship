@@ -10,8 +10,10 @@ Terraform, canary deploys with automated rollback, and production observability.
 > **Staging**: https://flagship-staging-potbp4ge6a-uc.a.run.app
 > Demo credentials (tenant API key + evaluator admin token) are delivered in the submission
 > email, never committed to this repository. Deployed through the canary pipeline (candidate →
-> smoke at 0% → 10% + synthetic gate → 100%); a live rollback drill restored the previous
-> revision in 23 s — Actions history has the receipts.
+> smoke at 0% → 10% + synthetic gate → 100%). Rollback is one `update-traffic` command — a
+> manual drill via gcloud restored the previous revision in 23 s; the production workflow
+> additionally rolls back automatically when the canary gate trips (see the "Automated
+> rollback" step in `deploy-production.yml`).
 
 ## Quickstart (local)
 
@@ -26,10 +28,11 @@ The seed creates two demo tenants with deterministic keys (local-only — see
 `prisma/seed.ts` for the security note):
 
 ```bash
+# seed output (make up) prints each demo tenant's id + key — copy them here
 curl -s -X POST localhost:8080/api/v1/evaluate \
   -H 'X-API-Key: ff_local_demo_storefront_key_0000000000000000' \
   -H 'Content-Type: application/json' \
-  -d '{"tenant_id":"<from make demo output>","environment":"staging","user_id":"user-42"}'
+  -d '{"tenant_id":"<demo-storefront id from seed output>","environment":"staging","user_id":"user-42"}'
 ```
 
 ## Architecture
@@ -109,8 +112,9 @@ bucket = first32bits( sha256( tenantId + ":" + flagKey + ":" + userId ) ) / 2^32
 serve ON value iff bucket < rollout_percentage
 ```
 
-Worked example: `sha256("t1:new-checkout:user-42")` → first 8 hex chars `5f4c…` → `0x5f4c…/2^32`
-≈ **37.2**. At a 40% rollout user-42 is **in** (37.2 < 40); at 30% they are out. No state is
+Worked example (real numbers — verify them yourself with `node -e`):
+`sha256("t1:new-checkout:user-42")` → first 8 hex chars `415a226e` → `0x415a226e / 2^32 × 100`
+≈ **25.53**. At a 30% rollout user-42 is **in** (25.53 < 30); at 20% they are out. No state is
 stored per user — the hash *is* the assignment.
 
 Properties, each proven by a unit test (`src/evaluation/engine/*.spec.ts`):
@@ -150,7 +154,8 @@ Full request/response examples in [`scripts/demo.sh`](scripts/demo.sh) (runnable
 | POST | `/api/v1/evaluate` | API key | evaluate for `{tenant_id, environment, user_id, context, flag_keys?}` |
 | POST | `/api/v1/evaluate/bulk` | API key | all active flags for a context |
 | GET | `/api/v1/stream?environment=` | API key | **SSE**: live flag-change events for tenant+env |
-| GET | `/healthz` · `/readyz` | none | liveness · readiness (DB+Redis) |
+| GET | `/readyz` | none | readiness (DB+Redis) — the external health endpoint |
+| GET | `/healthz` | none | container-internal probes only — Google's frontend intercepts this exact path on `run.app` (DECISIONS.md #10) |
 
 Errors always use `{"error":{"code","message"},"request_id"}`. The `tenant_id` in URLs/bodies is
 redundant on purpose: the API key is authoritative, and any mismatch is a cross-tenant attempt →
@@ -223,8 +228,8 @@ the RUNBOOK.
   dependencies, and the structured logs already exist. The OTel path is documented future work;
   `cpu_idle=false` is already set so switching later is config-only.
 - **Dashboard + alert policies in Terraform** (PromQL — MQL is deprecated): 5xx ratio >5% over
-  5min, eval p99 over threshold, uptime-check failures on `/healthz`, all routed to a
-  notification channel. Screenshots land here after the GCP deploy.
+  5min, eval p99 over threshold, uptime-check failures on `/readyz`, all routed to a
+  notification channel. The dashboard and alert policies are Terraform resources (`infra/modules/monitoring`) — visible in the GCP console; screenshots in `docs/img/` if present.
 
 ## Security
 
@@ -247,7 +252,7 @@ the RUNBOOK.
 ## Testing
 
 ```
-make test              # 58 unit tests, <2s
+make test              # 59 unit tests, <2s
 make test-integration  # 28 e2e tests vs real Postgres+Redis
 ```
 
@@ -261,7 +266,7 @@ make test-integration  # 28 e2e tests vs real Postgres+Redis
 - **Operational behavior**: rate limit 429s with `Retry-After` (neighbor tenant unaffected),
   cache invalidation visible on next read, revoked keys 401, log redaction config.
 - **Load**: `load-test/evaluate.k6.js` — warmup, ramp to 50 VUs, 2min hold, 100 VU spike, 70/30
-  single/bulk mix. Local baseline below; staging numbers land here after deploy. Thresholds are
+  single/bulk mix. Thresholds are
   informational — the deliverable is measured numbers, not a self-imposed SLO pass.
 
 | Run | RPS | p50 | p95 | p99 | errors |

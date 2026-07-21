@@ -9,6 +9,5 @@ coverage/
 *.tfstate
 *.tfstate.*
 .terraform/
-.terraform.lock.hcl
 crash.log
 k6-results*.json

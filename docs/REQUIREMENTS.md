@@ -61,9 +61,9 @@ Submission: GitHub repo URL + deployed GCP URL → asif@bizscout.com. Time expec
 6. GitHub Actions pipelines
 7. **Deployed application URL on GCP**
 
-## Job-post signals to mirror (differentiators)
+## Priorities inferred from the role description
 
-From the actual role description — the reviewer's own priorities:
+The role description emphasizes specific practices; this submission treats them as requirements:
 
 - GitHub Actions with **test coverage gates, container + dependency vulnerability scanning, versioned traceable builds** (verbatim from job post)
 - Terraform: **reusable modules, remote state with locking**, no console clicks

@@ -12,7 +12,6 @@ module.exports = {
     // coverage gate protects domain code (DECISIONS.md).
     '!src/main.ts',
     '!src/app.setup.ts',
-    '!src/otel.ts',
     '!src/realtime/**',
     '!src/**/*.module.ts',
   ],

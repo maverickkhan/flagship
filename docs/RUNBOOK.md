@@ -182,7 +182,7 @@ a hard cutover.
 # 1. Generate the new key (32 random bytes, base64url, ff_ prefix — 46 chars total)
 NEW_KEY="ff_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
 HASH=$(printf '%s' "$NEW_KEY" | shasum -a 256 | cut -d' ' -f1)
-PREFIX="${NEW_KEY:0:9}"
+PREFIX="${NEW_KEY:0:10}"
 ```
 
 ```sql
@@ -253,7 +253,7 @@ Three Terraform-managed alert policies. Ordered actions; stop when resolved.
 |---|---|---|
 | **5xx ratio > 5% over 5 min** (`run_googleapis_com/request_count`) | Serving errors — bad deploy, DB/Redis trouble, or a crashing revision | 1. Was there a deploy in the last hour? (`gcloud run revisions list --service flagship-production --region $REGION`) — if yes, **roll back first, diagnose second** (§3). 2. `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="flagship-production" AND severity>=ERROR' --freshness=15m` — group by `request_id`, read the error envelope `code`. 3. `curl $MAIN_URL/readyz` — failing PG or Redis ping narrows it to the data layer; check `gcloud sql instances describe flagship-production` / `gcloud redis instances describe flagship-production --region $REGION`. |
 | **Evaluate latency p99 > 250 ms** | Evaluation slow — almost always the cache | 1. Dashboard: cache hit ratio. Hit ratio at ~0 means Redis is down/unreachable and every evaluate is falling through to Postgres (degraded mode, §8.1) — check the Redis instance. 2. Dashboard: SQL CPU — `db-f1-micro` saturates under cache-miss load; confirm the cache is the cause rather than upsizing first. 3. Instance count at max (3) with high per-instance load → raise `max_instances` in the env tfvars and `make tf-apply ENV=production`. 4. Sustained load from one tenant → confirm tenant rate limits are enforcing (429s in logs); noisy neighbor should be capped at 600 evals/min. |
-| **Uptime check on `/healthz` failing** | Service not serving at all | 1. `gcloud run services describe flagship-production --region $REGION` — check the Ready condition and which revision has traffic. 2. Crash-looping new revision → startup-probe failures in logs → **roll back** (§3). 3. `gcloud logging read ... --freshness=10m` for startup errors (bad secret reference, migration/schema mismatch). 4. If the service is healthy but the check fails, verify the uptime check target survived the last `terraform apply`. |
+| **Uptime check on `/readyz` failing** | Service not serving at all | 1. `gcloud run services describe flagship-production --region $REGION` — check the Ready condition and which revision has traffic. 2. Crash-looping new revision → startup-probe failures in logs → **roll back** (§3). 3. `gcloud logging read ... --freshness=10m` for startup errors (bad secret reference, migration/schema mismatch). 4. If the service is healthy but the check fails, verify the uptime check target survived the last `terraform apply`. |
 
 Postmortem note ("never pages twice"): every page gets a written follow-up —
 what fired, what the fix was, and which automation or alert-tuning change
@@ -293,7 +293,7 @@ gcloud run services add-iam-policy-binding flagship-<env> --region "$REGION" \
 
 # callers then authenticate with an ID token
 curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  "$BASE_URL/healthz"
+  "$BASE_URL/readyz"
 ```
 
 The API's own `X-API-Key` auth is unchanged — the ID token only satisfies Cloud

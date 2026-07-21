@@ -118,8 +118,11 @@ async function main() {
     });
   }
 
-  console.log('Seeded demo tenants:');
-  for (const t of DEMO_TENANTS) console.log(`  ${t.name}: ${t.apiKey}`);
+  console.log('Seeded demo tenants (id / key):');
+  for (const t of DEMO_TENANTS) {
+    const row = await prisma.tenant.findUnique({ where: { name: t.name } });
+    console.log(`  ${t.name}: ${row?.id} / ${t.apiKey}`);
+  }
 }
 
 main()

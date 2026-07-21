@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
 import {
   ArrayNotEmpty,
   IsIn,
@@ -44,11 +44,14 @@ export class EvaluationController {
   constructor(private readonly evaluation: EvaluationService) {}
 
   @Post()
+  // Evaluation is a query, not a creation — 200, not NestJS's POST-default 201.
+  @HttpCode(HttpStatus.OK)
   evaluate(@Body() dto: EvaluateDto, @Req() req: AuthenticatedRequest) {
     return this.evaluation.evaluate(req.tenant!.id, dto, String(req.id));
   }
 
   @Post('bulk')
+  @HttpCode(HttpStatus.OK)
   bulk(@Body() dto: EvaluateDto, @Req() req: AuthenticatedRequest) {
     return this.evaluation.evaluate(
       req.tenant!.id,

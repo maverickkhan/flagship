@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import type { Request, Response } from 'express';
 
 const CODE_BY_STATUS: Record<number, string> = {
@@ -50,13 +51,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
       this.logger.error(exception instanceof Error ? exception.stack : String(exception));
     }
 
+    // Body-parse failures can reach this filter before the request-id
+    // middleware has stamped req.id — the envelope contract holds regardless.
+    const requestId = typeof req.id === 'string' ? req.id : randomUUID();
+    res.setHeader('X-Request-ID', requestId);
     res.status(status).json({
       error: {
         code: code ?? CODE_BY_STATUS[status] ?? 'ERROR',
         message,
         ...(details !== undefined ? { details } : {}),
       },
-      request_id: req.id,
+      request_id: requestId,
     });
   }
 }

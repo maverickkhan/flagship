@@ -60,7 +60,7 @@ describe('flag lifecycle + audit trail (e2e)', () => {
     const evalIn = async (environment: string) => {
       const res = await auth(t.http().post('/api/v1/evaluate'))
         .send({ tenant_id: tenant.tenantId, environment, user_id: 'u-1' })
-        .expect(201);
+        .expect(200);
       return res.body.flags['checkout-v2'];
     };
     expect(await evalIn('staging')).toEqual({ value: true, reason: 'FALLTHROUGH' });
@@ -71,7 +71,7 @@ describe('flag lifecycle + audit trail (e2e)', () => {
     // Warm the cache…
     await auth(t.http().post('/api/v1/evaluate'))
       .send({ tenant_id: tenant.tenantId, environment: 'staging', user_id: 'u-1' })
-      .expect(201);
+      .expect(200);
     // …mutate…
     await auth(
       t.http().put(`/api/v1/tenants/${tenant.tenantId}/flags/checkout-v2?environment=staging`),
@@ -81,7 +81,7 @@ describe('flag lifecycle + audit trail (e2e)', () => {
     // …and the next read must reflect it (explicit DEL, not TTL expiry).
     const res = await auth(t.http().post('/api/v1/evaluate'))
       .send({ tenant_id: tenant.tenantId, environment: 'staging', user_id: 'u-1' })
-      .expect(201);
+      .expect(200);
     expect(res.body.flags['checkout-v2'].reason).toBe('FLAG_DISABLED');
   });
 
@@ -90,7 +90,7 @@ describe('flag lifecycle + audit trail (e2e)', () => {
 
     const bulk = await auth(t.http().post('/api/v1/evaluate/bulk'))
       .send({ tenant_id: tenant.tenantId, environment: 'staging', user_id: 'u-1' })
-      .expect(201);
+      .expect(200);
     expect(Object.keys(bulk.body.flags)).not.toContain('checkout-v2');
 
     const listed = await auth(
@@ -175,7 +175,7 @@ describe('flag lifecycle + audit trail (e2e)', () => {
       .expect(200);
     const res = await auth(t.http().post('/api/v1/evaluate'))
       .send({ tenant_id: tenant.tenantId, environment: 'staging', user_id: 'variant-user' })
-      .expect(201);
+      .expect(200);
     expect(['green', 'red']).toContain(res.body.flags['cta-color'].value);
   });
 });
