@@ -5,9 +5,13 @@ configuration through one API, with deterministic percentage rollouts, environme
 an immutable audit trail, real-time change streaming (SSE), and a full GCP deployment story —
 Terraform, canary deploys with automated rollback, and production observability.
 
-> **Deployed URLs**: _pending GCP deployment_ — staging: `TBD` · production: `TBD`
+> **Deployed URLs (live)**
+> **Production**: https://flagship-production-potbp4ge6a-uc.a.run.app
+> **Staging**: https://flagship-staging-potbp4ge6a-uc.a.run.app
 > Demo credentials (tenant API key + evaluator admin token) are delivered in the submission
-> email, never committed to this repository.
+> email, never committed to this repository. Deployed through the canary pipeline (candidate →
+> smoke at 0% → 10% + synthetic gate → 100%); a live rollback drill restored the previous
+> revision in 23 s — Actions history has the receipts.
 
 ## Quickstart (local)
 
@@ -263,12 +267,14 @@ make test-integration  # 28 e2e tests vs real Postgres+Redis
 | Run | RPS | p50 | p95 | p99 | errors |
 |---|---|---|---|---|---|
 | local (M-series, 61,460 reqs, 100 VU peak) | 245.7/s¹ | 2.9 ms | 5.6 ms | 8.4 ms | 0.00% |
-| staging (Cloud Run) | _pending GCP deploy_ | | | | |
+| staging (Cloud Run, 47,695 reqs, GitHub US runner) | 190.7/s¹ | 48.6 ms² | 167.6 ms² | 206.4 ms² | 0.00% |
 
-¹ Rate is pacing-limited by the scenario (per-VU sleep), not the server — p95 stayed at 5.6 ms at
-peak. Bonus empirical check: the seeded staging flag runs a **40% rollout**, and across 61k
-requests with random users k6 observed **40.3% ROLLOUT_MATCH** — the bucketing distribution
-measured in the wild, not just in unit tests.
+¹ Rate is pacing-limited by the scenario (per-VU sleep), not the server — local p95 stayed at
+5.6 ms at peak. ² Client-side from the runner, WAN RTT included; server-side latency is the
+local row. Empirical distribution checks, measured in the wild across ~109k total requests:
+staging seed flag at **40% rollout → 40.3% observed match** (local run); CI-minted flags at
+**50% + 25% rollout → 37.5% predicted blended match, 37.8% observed** (staging run). The
+bucketing algorithm's distribution properties hold outside unit tests.
 
 CI runs lint → typecheck → unit+integration (coverage gate: 80% lines) → `npm audit` → Trivy on
 both images → `terraform validate` on every PR. With more time: SDK contract tests, mutation
