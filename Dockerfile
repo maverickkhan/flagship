@@ -49,8 +49,12 @@ RUN apt-get update \
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
+# Strip the npm CLI bundled with the base image: not needed at runtime (the
+# prisma binary is invoked directly) and its vendored deps carry CVEs
+# (e.g. CVE-2026-13149 in brace-expansion) that fail the Trivy gate.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 USER node
-CMD ["npx", "prisma", "migrate", "deploy"]
+CMD ["./node_modules/.bin/prisma", "migrate", "deploy"]
 
 # ============================================================
 # runtime: pruned production API image
@@ -68,6 +72,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma/client ./node_modules/@prisma/client
 COPY --from=build /app/dist ./dist
+# npm CLI removed post-install: runtime is `node dist/main.js`, npm is pure
+# attack surface here and its vendored deps trip the Trivy HIGH gate
+# (CVE-2026-13149 et al. in npm's own node_modules).
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 USER node
 EXPOSE 8080
 # node:22-slim ships neither wget nor curl; Node 22 has global fetch.
