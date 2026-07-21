@@ -5,7 +5,7 @@ terraform {
     # and the GCS backend locks state natively (no extra lock table). If your
     # project id differs, override at init time:
     #   terraform init -backend-config="bucket=<your-project-id>-tfstate"
-    bucket = "flagship-demo-project-tfstate"
+    bucket = "project-2764c5ca-8149-443b-b81-tfstate"
     prefix = "envs/production"
   }
 }
