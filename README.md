@@ -83,11 +83,36 @@ erDiagram
     flags ||--o{ flag_environments : "3 rows: dev/staging/prod"
     flags ||--o{ audit_logs : "append-only (DB trigger)"
 
-    tenants { uuid id PK; text name UK }
-    api_keys { text key_hash UK "sha256 only"; text key_prefix; timestamptz revoked_at }
-    flags { text key "UK(tenant_id,key)"; enum type "boolean|string|number"; jsonb default_value "the OFF value"; enum status "active|archived" }
-    flag_environments { enum environment; bool enabled; jsonb serve_value "the ON value"; numeric rollout_percentage; jsonb targeting_rules; jsonb variants }
-    audit_logs { text actor; enum action; jsonb old_value; jsonb new_value; text request_id "joins to logs" }
+    tenants {
+        uuid id PK
+        text name UK
+    }
+    api_keys {
+        text key_hash UK "sha256 only"
+        text key_prefix
+        timestamptz revoked_at
+    }
+    flags {
+        text key "unique per tenant"
+        enum type "boolean / string / number"
+        jsonb default_value "the OFF value"
+        enum status "active / archived"
+    }
+    flag_environments {
+        enum environment
+        bool enabled
+        jsonb serve_value "the ON value"
+        numeric rollout_percentage
+        jsonb targeting_rules
+        jsonb variants
+    }
+    audit_logs {
+        text actor
+        enum action
+        jsonb old_value
+        jsonb new_value
+        text request_id "joins to logs"
+    }
 ```
 
 Every table carries `tenant_id`; `flag_environments` holds it denormalized, kept consistent by a
