@@ -231,8 +231,9 @@ the RUNBOOK.
   5min, eval p99 over threshold, uptime-check failures on `/readyz`, all routed to a
   notification channel.
 
-  Live production dashboard (eval latency percentiles, evals/sec by tenant, cache hit ratio —
-  all derived from the log-based metrics; the empty error-rate panel means zero 5xx served):
+  Live production dashboard, 24h view (eval latency percentiles, evals/sec by tenant, cache
+  hit ratio — all derived from the log-based metrics; the empty error-rate panel means zero
+  5xx served):
 
   ![Production dashboard](docs/img/dashboard-production.png)
 
