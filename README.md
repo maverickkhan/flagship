@@ -250,6 +250,14 @@ the RUNBOOK.
 
   ![Alert policies](docs/img/alerting-policies.png)
 
+  Uptime checks probe `/readyz` on both services every 60s from six regions across four
+  continents — production at 100% uptime, ~127ms check latency, with the failure alert
+  policy attached:
+
+  ![Uptime checks](docs/img/uptime-checks.png)
+
+  ![Production uptime detail](docs/img/uptime-production.png)
+
   Secrets — every one Terraform-managed (`goog-terraform-managed: true`), none hand-created:
 
   ![Secret Manager](docs/img/secret-manager.png)
