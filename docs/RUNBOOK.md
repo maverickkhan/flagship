@@ -304,7 +304,9 @@ Run's infrastructure-level invoker check, so callers send both headers.
 Terraform-created **email** notification channels start `UNVERIFIED` and
 **silently drop notifications** — alerts fire but nobody is emailed. Verification
 is a one-click link in the email, and it is the single documented exception to
-no-console-clicks (DECISIONS.md #2). After any re-create of the channel:
+no-console-clicks (DECISIONS.md #2). **Both channels in this deployment are
+VERIFIED** (via `notificationChannels:sendVerificationCode` + `:verify` — the
+API path avoids even the console click). After any re-create of the channel:
 
 ```bash
 gcloud beta monitoring channels list --format='table(displayName, type, verificationStatus)'

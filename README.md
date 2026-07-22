@@ -244,7 +244,9 @@ the RUNBOOK.
 
   ![Staging dashboard — k6 run](docs/img/dashboard-staging-k6.png)
 
-  All six alert policies live and enabled (both environments):
+  All six alert policies live and enabled (both environments), routing to a **verified**
+  email notification channel — the alert → first-response playbook for each lives in
+  [`docs/RUNBOOK.md §6`](docs/RUNBOOK.md):
 
   ![Alert policies](docs/img/alerting-policies.png)
 
