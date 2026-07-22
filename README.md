@@ -1,5 +1,9 @@
 # Flagship — Multi-Tenant Config & Feature Flag Service
 
+[![CI](https://github.com/maverickkhan/flagship/actions/workflows/ci.yml/badge.svg)](https://github.com/maverickkhan/flagship/actions/workflows/ci.yml)
+[![Deploy Staging](https://github.com/maverickkhan/flagship/actions/workflows/deploy-staging.yml/badge.svg)](https://github.com/maverickkhan/flagship/actions/workflows/deploy-staging.yml)
+[![Deploy Production](https://github.com/maverickkhan/flagship/actions/workflows/deploy-production.yml/badge.svg)](https://github.com/maverickkhan/flagship/actions/workflows/deploy-production.yml)
+
 A simplified LaunchDarkly: multiple applications (tenants) manage feature flags and runtime
 configuration through one API, with deterministic percentage rollouts, environment-scoped state,
 an immutable audit trail, real-time change streaming (SSE), and a full GCP deployment story —
@@ -224,7 +228,21 @@ the RUNBOOK.
   `X-Request-ID`, stored on audit rows — logs join to audit history), `tenant_id`, and the Cloud
   Trace field so app logs nest under their Cloud Run request log. Credential-bearing headers are
   **redacted at the serializer** (`x-api-key`, `x-admin-token`, `authorization`, cookies) — unit
-  tested, and the staging smoke test greps its own request logs to prove key absence.
+  tested, and the staging smoke test greps its own request logs to prove key absence. A real
+  entry pulled from production Cloud Logging (trimmed):
+
+  ```json
+  {
+    "tenant_id": "ce3aa4e5-a2e1-4606-9ccf-8f65e41ea5cb",
+    "req": {
+      "method": "PUT",
+      "url": "/api/v1/tenants/.../flags/my-test-flag?environment=production",
+      "headers": { "host": "flagship-production-...run.app", "x-api-key": "[REDACTED]" }
+    },
+    "res": { "statusCode": 200 },
+    "responseTime": 39
+  }
+  ```
 - **Metrics — log-based, by design**: the app emits structured events (`flag_evaluation` with
   `duration_ms` + tenant, `flag_cache` hit/miss) and Terraform `google_logging_metric` resources
   derive the custom metrics from them: evaluation latency distribution (p50/p95/p99),
