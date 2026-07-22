@@ -109,6 +109,21 @@ Every flag has an **OFF value** (`default_value`) and a per-environment **ON val
 | 5 | in rollout, string flag with variants | weighted variant | `ROLLOUT_MATCH` |
 | 6 | in rollout | ON value | `ROLLOUT_MATCH` (or `FALLTHROUGH` at 100%) |
 
+```mermaid
+flowchart TD
+    A[evaluate flag for user] --> B{archived?}
+    B -->|yes| OFF1[OFF value<br/>FLAG_ARCHIVED]
+    B -->|no| C{env enabled?}
+    C -->|no| OFF2[OFF value<br/>FLAG_DISABLED]
+    C -->|yes| D{targeting rule<br/>matches context?}
+    D -->|first match| T[rule's serve value<br/>TARGETING_MATCH]
+    D -->|no match| E{"bucket(tenant, flag, user)<br/>&lt; rollout %?"}
+    E -->|no| OFF3[OFF value<br/>ROLLOUT_MISS]
+    E -->|yes| F{string flag<br/>with variants?}
+    F -->|yes| V[weighted variant pick<br/>independent bucket]
+    F -->|no| ON[ON value<br/>ROLLOUT_MATCH / FALLTHROUGH]
+```
+
 ### Deterministic percentage rollouts
 
 ```
@@ -146,6 +161,10 @@ growing the rollout only ever adds users. Both properties are unit-tested.
 ## API
 
 Full request/response examples in [`scripts/demo.sh`](scripts/demo.sh) (runnable: `make demo`).
+A **[Postman collection](postman/)** covers all 23 endpoints/behaviors with ~50 assertions —
+self-contained (mints its own tenants), tested against live production via newman
+(28 requests, 49 assertions, 0 failures). Reviewers: start at
+[`docs/REVIEWER_GUIDE.md`](docs/REVIEWER_GUIDE.md).
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
@@ -195,6 +214,19 @@ Express `trust proxy = 1` (Cloud Run's front end appends the real IP; naive left
 spoofable, naive rightmost is a proxy).
 
 ## Deployment: canary with automated rollback
+
+```mermaid
+flowchart TD
+    A[workflow_dispatch<br/>image_tag] --> B[Run migrate job<br/>expand/contract, --wait]
+    B --> C[Deploy revision at 0%<br/>tag: candidate]
+    C --> D[Smoke suite vs tagged URL<br/>mint tenant → CRUD → evaluate → log-leak grep]
+    D -->|pass| E[Shift 10% traffic]
+    D -->|fail| R[Deploy stops<br/>zero user impact]
+    E --> F[~200 synthetic requests<br/>through main URL]
+    F -->|failures ≤ 1%| G[Promote to 100%]
+    F -->|failures > 1%| H[AUTOMATED ROLLBACK<br/>previous revision → 100%<br/>workflow fails loudly]
+    G --> I[Old revisions retained at 0%<br/>= instant rollback targets]
+```
 
 Cloud Run revisions are immutable, which makes blue-green/canary nearly free:
 

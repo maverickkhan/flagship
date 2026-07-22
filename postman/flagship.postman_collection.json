@@ -1,0 +1,816 @@
+{
+  "info": {
+    "_postman_id": "f1a95h1p-0001-4c0d-9e2e-flagship2026",
+    "name": "Flagship — Multi-Tenant Feature Flag Service",
+    "description": "Self-contained API tour. Set `base_url` and `admin_token` in the environment, then run top-to-bottom (or via the Collection Runner / newman). The collection mints its own throwaway tenants and flags, asserts every response, and demonstrates: tenant registration, flag CRUD, deterministic percentage rollouts, targeting rules, weighted string variants, environment scoping, audit history, archive/restore, tenant isolation (403), and auth failures (401/422).\n\nEvery request carries tests — a clean run = every documented behavior verified against the live service.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "tenant_id", "value": "" },
+    { "key": "api_key", "value": "" },
+    { "key": "tenant_b_id", "value": "" },
+    { "key": "api_key_b", "value": "" },
+    { "key": "suffix", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0 · Health",
+      "item": [
+        {
+          "name": "Root — service card",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('service card', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.service).to.eql('flagship');",
+                  "  pm.expect(b.api).to.be.an('object');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/", "host": ["{{base_url}}"], "path": [""] } }
+        },
+        {
+          "name": "Readiness — DB + Redis",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('dependencies up', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.status).to.eql('ok');",
+                  "  pm.expect(b.database).to.be.true;",
+                  "  pm.expect(b.redis).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/readyz", "host": ["{{base_url}}"], "path": ["readyz"] } }
+        }
+      ]
+    },
+    {
+      "name": "1 · Tenants",
+      "item": [
+        {
+          "name": "Register tenant A (admin token)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('suffix', Date.now().toString(36));"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.test('returns id + ff_ key + 3 environments', () => {",
+                  "  pm.expect(b.tenant_id).to.be.a('string');",
+                  "  pm.expect(b.api_key).to.match(/^ff_/);",
+                  "  pm.expect(b.environments).to.eql(['development','staging','production']);",
+                  "});",
+                  "pm.collectionVariables.set('tenant_id', b.tenant_id);",
+                  "pm.collectionVariables.set('api_key', b.api_key);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Admin-Token", "value": "{{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"name\":\"postman-tour-{{suffix}}\"}" },
+            "url": { "raw": "{{base_url}}/api/v1/tenants", "host": ["{{base_url}}"], "path": ["api", "v1", "tenants"] }
+          }
+        },
+        {
+          "name": "Register tenant B (for isolation test)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set('tenant_b_id', b.tenant_id);",
+                  "pm.collectionVariables.set('api_key_b', b.api_key);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Admin-Token", "value": "{{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"name\":\"postman-tour-b-{{suffix}}\"}" },
+            "url": { "raw": "{{base_url}}/api/v1/tenants", "host": ["{{base_url}}"], "path": ["api", "v1", "tenants"] }
+          }
+        },
+        {
+          "name": "Duplicate tenant name → 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "pm.test('error envelope with request_id', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.error.code).to.eql('CONFLICT');",
+                  "  pm.expect(b.request_id).to.be.a('string');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Admin-Token", "value": "{{admin_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"name\":\"postman-tour-{{suffix}}\"}" },
+            "url": { "raw": "{{base_url}}/api/v1/tenants", "host": ["{{base_url}}"], "path": ["api", "v1", "tenants"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 · Flag CRUD",
+      "item": [
+        {
+          "name": "Create boolean flag",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.test('three env rows, all disabled', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(Object.keys(b.environments).sort()).to.eql(['development','production','staging']);",
+                  "  Object.values(b.environments).forEach(e => pm.expect(e.enabled).to.be.false);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"key\":\"checkout-v2\",\"name\":\"Checkout v2\",\"description\":\"Postman tour flag\",\"type\":\"boolean\",\"default_value\":false}" },
+            "url": { "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags", "host": ["{{base_url}}"], "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags"] }
+          }
+        },
+        {
+          "name": "Create string flag with weighted variants",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"key\":\"cta-color\",\"name\":\"CTA color experiment\",\"type\":\"string\",\"default_value\":\"blue\"}" },
+            "url": { "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags", "host": ["{{base_url}}"], "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags"] }
+          }
+        },
+        {
+          "name": "Type mismatch → 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));",
+                  "pm.test('typed error message', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.error.code).to.eql('UNPROCESSABLE');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"key\":\"bad-flag\",\"name\":\"Bad\",\"type\":\"number\",\"default_value\":\"not-a-number\"}" },
+            "url": { "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags", "host": ["{{base_url}}"], "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags"] }
+          }
+        },
+        {
+          "name": "Enable checkout-v2 in production (100%)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('production enabled, staging untouched', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.environments.production.enabled).to.be.true;",
+                  "  pm.expect(b.environments.staging.enabled).to.be.false;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"enabled\":true,\"rollout_percentage\":100}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags/checkout-v2?environment=production",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags", "checkout-v2"],
+              "query": [{ "key": "environment", "value": "production" }]
+            }
+          }
+        },
+        {
+          "name": "Enable cta-color with 70/30 variants",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"enabled\":true,\"variants\":[{\"value\":\"green\",\"weight\":70},{\"value\":\"red\",\"weight\":30}]}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags/cta-color?environment=production",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags", "cta-color"],
+              "query": [{ "key": "environment", "value": "production" }]
+            }
+          }
+        },
+        {
+          "name": "Bad variant weights (sum ≠ 100) → 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"variants\":[{\"value\":\"green\",\"weight\":70},{\"value\":\"red\",\"weight\":60}]}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags/cta-color?environment=production",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags", "cta-color"],
+              "query": [{ "key": "environment", "value": "production" }]
+            }
+          }
+        },
+        {
+          "name": "List flags (production, active)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('both flags listed with pagination', () => {",
+                  "  const b = pm.response.json();",
+                  "  const keys = b.flags.map(f => f.key);",
+                  "  pm.expect(keys).to.include('checkout-v2');",
+                  "  pm.expect(keys).to.include('cta-color');",
+                  "  pm.expect(b.pagination.total).to.be.at.least(2);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags?environment=production&status=active",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags"],
+              "query": [
+                { "key": "environment", "value": "production" },
+                { "key": "status", "value": "active" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 · Evaluation engine",
+      "item": [
+        {
+          "name": "Evaluate — boolean at 100% → true / FALLTHROUGH",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('serves ON value with reason', () => {",
+                  "  const f = pm.response.json().flags['checkout-v2'];",
+                  "  pm.expect(f.value).to.be.true;",
+                  "  pm.expect(f.reason).to.eql('FALLTHROUGH');",
+                  "});",
+                  "pm.test('response carries request_id', () => {",
+                  "  pm.expect(pm.response.json().request_id).to.be.a('string');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"tenant_id\":\"{{tenant_id}}\",\"environment\":\"production\",\"user_id\":\"user-42\",\"context\":{},\"flag_keys\":[\"checkout-v2\"]}" },
+            "url": { "raw": "{{base_url}}/api/v1/evaluate", "host": ["{{base_url}}"], "path": ["api", "v1", "evaluate"] }
+          }
+        },
+        {
+          "name": "Set 30% rollout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"rollout_percentage\":30}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags/checkout-v2?environment=production",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags", "checkout-v2"],
+              "query": [{ "key": "environment", "value": "production" }]
+            }
+          }
+        },
+        {
+          "name": "Determinism probe #1 (user-42 at 30%)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const f = pm.response.json().flags['checkout-v2'];",
+                  "pm.test('reason is a rollout decision', () => {",
+                  "  pm.expect(['ROLLOUT_MATCH','ROLLOUT_MISS']).to.include(f.reason);",
+                  "});",
+                  "pm.collectionVariables.set('probe_value', JSON.stringify(f.value));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"tenant_id\":\"{{tenant_id}}\",\"environment\":\"production\",\"user_id\":\"user-42\",\"context\":{},\"flag_keys\":[\"checkout-v2\"]}" },
+            "url": { "raw": "{{base_url}}/api/v1/evaluate", "host": ["{{base_url}}"], "path": ["api", "v1", "evaluate"] }
+          }
+        },
+        {
+          "name": "Determinism probe #2 — must equal #1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('same user → identical value (deterministic hashing)', () => {",
+                  "  const f = pm.response.json().flags['checkout-v2'];",
+                  "  pm.expect(JSON.stringify(f.value)).to.eql(pm.collectionVariables.get('probe_value'));",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"tenant_id\":\"{{tenant_id}}\",\"environment\":\"production\",\"user_id\":\"user-42\",\"context\":{},\"flag_keys\":[\"checkout-v2\"]}" },
+            "url": { "raw": "{{base_url}}/api/v1/evaluate", "host": ["{{base_url}}"], "path": ["api", "v1", "evaluate"] }
+          }
+        },
+        {
+          "name": "Add targeting rule (country in [PK])",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"targeting_rules\":[{\"attribute\":\"country\",\"operator\":\"in\",\"values\":[\"PK\"],\"serve\":true}]}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags/checkout-v2?environment=production",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags", "checkout-v2"],
+              "query": [{ "key": "environment", "value": "production" }]
+            }
+          }
+        },
+        {
+          "name": "Evaluate with matching context → TARGETING_MATCH",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('rule beats rollout for ANY user', () => {",
+                  "  const f = pm.response.json().flags['checkout-v2'];",
+                  "  pm.expect(f.value).to.be.true;",
+                  "  pm.expect(f.reason).to.eql('TARGETING_MATCH');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"tenant_id\":\"{{tenant_id}}\",\"environment\":\"production\",\"user_id\":\"any-user-at-all\",\"context\":{\"country\":\"PK\"},\"flag_keys\":[\"checkout-v2\"]}" },
+            "url": { "raw": "{{base_url}}/api/v1/evaluate", "host": ["{{base_url}}"], "path": ["api", "v1", "evaluate"] }
+          }
+        },
+        {
+          "name": "Bulk evaluate — all active flags",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('both flags present, variant is green|red', () => {",
+                  "  const flags = pm.response.json().flags;",
+                  "  pm.expect(flags).to.have.property('checkout-v2');",
+                  "  pm.expect(['green','red']).to.include(flags['cta-color'].value);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"tenant_id\":\"{{tenant_id}}\",\"environment\":\"production\",\"user_id\":\"user-7\",\"context\":{}}" },
+            "url": { "raw": "{{base_url}}/api/v1/evaluate/bulk", "host": ["{{base_url}}"], "path": ["api", "v1", "evaluate", "bulk"] }
+          }
+        },
+        {
+          "name": "Environment scoping — staging still disabled",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('staging serves OFF value / FLAG_DISABLED', () => {",
+                  "  const f = pm.response.json().flags['checkout-v2'];",
+                  "  pm.expect(f.value).to.be.false;",
+                  "  pm.expect(f.reason).to.eql('FLAG_DISABLED');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"tenant_id\":\"{{tenant_id}}\",\"environment\":\"staging\",\"user_id\":\"user-42\",\"context\":{},\"flag_keys\":[\"checkout-v2\"]}" },
+            "url": { "raw": "{{base_url}}/api/v1/evaluate", "host": ["{{base_url}}"], "path": ["api", "v1", "evaluate"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 · Audit & lifecycle",
+      "item": [
+        {
+          "name": "History — chronological with old/new values",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('created + updated entries with pre-images', () => {",
+                  "  const h = pm.response.json().history;",
+                  "  const actions = h.map(e => e.action);",
+                  "  pm.expect(actions).to.include('flag.created');",
+                  "  pm.expect(actions).to.include('flag.updated');",
+                  "  const upd = h.find(e => e.action === 'flag.updated' && e.environment === 'production');",
+                  "  pm.expect(upd.old_value).to.exist;",
+                  "  pm.expect(upd.new_value).to.exist;",
+                  "  pm.expect(upd.request_id).to.be.a('string');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags/checkout-v2/history",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags", "checkout-v2", "history"]
+            }
+          }
+        },
+        {
+          "name": "Archive (soft-delete)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('archived', () => pm.expect(pm.response.json().status).to.eql('archived'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags/checkout-v2",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags", "checkout-v2"]
+            }
+          }
+        },
+        {
+          "name": "Bulk excludes archived flags",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('checkout-v2 gone from bulk', () => {",
+                  "  pm.expect(pm.response.json().flags).to.not.have.property('checkout-v2');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"tenant_id\":\"{{tenant_id}}\",\"environment\":\"production\",\"user_id\":\"user-7\",\"context\":{}}" },
+            "url": { "raw": "{{base_url}}/api/v1/evaluate/bulk", "host": ["{{base_url}}"], "path": ["api", "v1", "evaluate", "bulk"] }
+          }
+        },
+        {
+          "name": "Restore via status:active (audited as flag.unarchived)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('active again', () => pm.expect(pm.response.json().status).to.eql('active'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"status\":\"active\"}" },
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags/checkout-v2",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags", "checkout-v2"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 · Security & isolation",
+      "item": [
+        {
+          "name": "No API key → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('401 Unauthenticated', () => pm.response.to.have.status(401));",
+                  "pm.test('envelope + request_id', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.error.code).to.eql('UNAUTHENTICATED');",
+                  "  pm.expect(b.request_id).to.be.a('string');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags"]
+            }
+          }
+        },
+        {
+          "name": "Tenant B's key on tenant A's flags → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "pm.test('TENANT_MISMATCH', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('TENANT_MISMATCH');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{api_key_b}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/v1/tenants/{{tenant_id}}/flags",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "tenants", "{{tenant_id}}", "flags"]
+            }
+          }
+        },
+        {
+          "name": "Cross-tenant evaluate (body tenant_id) → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{api_key_b}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"tenant_id\":\"{{tenant_id}}\",\"environment\":\"production\",\"user_id\":\"u\",\"context\":{}}" },
+            "url": { "raw": "{{base_url}}/api/v1/evaluate", "host": ["{{base_url}}"], "path": ["api", "v1", "evaluate"] }
+          }
+        },
+        {
+          "name": "Bad admin token → 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('401 Unauthenticated', () => pm.response.to.have.status(401));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-Admin-Token", "value": "definitely-wrong-token" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"name\":\"should-never-exist\"}" },
+            "url": { "raw": "{{base_url}}/api/v1/tenants", "host": ["{{base_url}}"], "path": ["api", "v1", "tenants"] }
+          }
+        }
+      ]
+    }
+  ]
+}
