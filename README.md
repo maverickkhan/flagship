@@ -238,6 +238,11 @@ the RUNBOOK.
 
   ![Production dashboard — instances + SQL](docs/img/dashboard-production-2.png)
 
+  Staging over 24h — the k6 load-test spike (~200 evals/sec) with per-tenant series, and the
+  flag-config cache holding a ≥99.97% hit ratio under load (y-axis starts at 0.99975):
+
+  ![Staging dashboard — k6 run](docs/img/dashboard-staging-k6.png)
+
   All six alert policies live and enabled (both environments):
 
   ![Alert policies](docs/img/alerting-policies.png)
