@@ -229,7 +229,22 @@ the RUNBOOK.
   `cpu_idle=false` is already set so switching later is config-only.
 - **Dashboard + alert policies in Terraform** (PromQL — MQL is deprecated): 5xx ratio >5% over
   5min, eval p99 over threshold, uptime-check failures on `/readyz`, all routed to a
-  notification channel. The dashboard and alert policies are Terraform resources (`infra/modules/monitoring`) — visible in the GCP console; screenshots in `docs/img/` if present.
+  notification channel.
+
+  Live production dashboard (eval latency percentiles, evals/sec by tenant, cache hit ratio —
+  all derived from the log-based metrics; the empty error-rate panel means zero 5xx served):
+
+  ![Production dashboard](docs/img/dashboard-production.png)
+
+  ![Production dashboard — instances + SQL](docs/img/dashboard-production-2.png)
+
+  All six alert policies live and enabled (both environments):
+
+  ![Alert policies](docs/img/alerting-policies.png)
+
+  Secrets — every one Terraform-managed (`goog-terraform-managed: true`), none hand-created:
+
+  ![Secret Manager](docs/img/secret-manager.png)
 
 ## Security
 
