@@ -207,6 +207,12 @@ Cloud Run revisions are immutable, which makes blue-green/canary nearly free:
 5. **Promote or roll back** — pass → 100%; fail → `gcloud run services update-traffic
    --to-revisions <previous>=100` **automatically**, and the workflow fails loudly.
 
+The live revision list — latest at 100% (tagged `candidate` from the canary flow), six older
+revisions retained at 0% as instant-rollback targets, deployed by the WIF deployer service
+account (no human, no SA key), all secrets injected by reference:
+
+![Cloud Run revisions](docs/img/cloudrun-revisions.png)
+
 Rollback is one traffic command and takes effect in seconds — but honestly: *fast, not warm*.
 A 0%-traffic revision holds no service-level min instances, so the first requests after rollback
 may cold-start (~2–4s). The warm variant (keep 1% on the old revision during a soak window) is in
